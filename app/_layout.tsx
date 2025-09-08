@@ -1,3 +1,4 @@
+import "@/app/styles/app.css";
 import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from 'expo-splash-screen';
@@ -29,6 +30,13 @@ export default function RootLayout() {
       <Stack.Screen name="index" options={{ headerShown: false }} />
       <Stack.Screen
         name="account-setup"
+        options={{
+          animation: "slide_from_bottom", // 👈 slide up transition
+          headerShown: false,
+        }}
+      />
+      <Stack.Screen
+        name="(tabs)"
         options={{
           animation: "slide_from_bottom", // 👈 slide up transition
           headerShown: false,

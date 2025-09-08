@@ -2,7 +2,6 @@ import { router } from "expo-router";
 import { Image, Text, View } from "react-native";
 import Container from "./components/Container";
 import CustomButton from "./components/CustomButton";
-import "./styles/app.css";
 
 export default function App() {
   const handlePress = () => {
