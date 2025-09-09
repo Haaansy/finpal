@@ -13,6 +13,11 @@ export default function RootLayout() {
     'Montserrat-Regular': require('../assets/fonts/Montserrat/static/Montserrat-Regular.ttf'),
     'PlayfairDisplay-Bold': require('../assets/fonts/Playfair_Display/static/PlayfairDisplay-Bold.ttf'),
     'PlayfairDisplay-Regular': require('../assets/fonts/Playfair_Display/static/PlayfairDisplay-Regular.ttf'),
+    'Roboto-Bold': require('../assets/fonts/Roboto/static/Roboto-Bold.ttf'),
+    'Roboto-Regular': require('../assets/fonts/Roboto/static/Roboto-Regular.ttf'),
+    'Roboto-Black': require('../assets/fonts/Roboto/static/Roboto-Black.ttf'),
+    'PTSans-Bold': require('../assets/fonts/PTSans/static/PTSans-Bold.ttf'),
+    'PTSans-Regular': require('../assets/fonts/PTSans/static/PTSans-Regular.ttf'),
   });
 
   useEffect(() => {

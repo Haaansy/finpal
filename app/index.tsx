@@ -14,20 +14,20 @@ export default function App() {
         <View className="items-start justify-center">
           <Text
             className="text-6xl font-bold text-black mb-4"
-            style={{ fontFamily: "Montserrat-Bold" }}
+            style={{ fontFamily: "Roboto-Bold" }}
           >
             Hello,
           </Text>
           <Text
             className="text-xl font-bold text-black mb-4"
-            style={{ fontFamily: "Montserrat-Bold" }}
+            style={{ fontFamily: "Roboto-Bold" }}
           >
             I&apos;m
           </Text>
           <Image source={require("../assets/images/finPal-logo.png")} />
           <Text
             className="text-xl font-bold text-black mt-4"
-            style={{ fontFamily: "Montserrat-Bold" }}
+            style={{ fontFamily: "Roboto-Bold" }}
           >
             Your Smart Finance Buddy.
           </Text>

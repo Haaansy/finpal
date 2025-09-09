@@ -16,22 +16,22 @@ const AccountSetup = () => {
           contentFit="contain"
         />
 
-        <Text className="text-2xl" style={{ fontFamily: "Montserrat-Bold" }}>
+        <Text className="text-2xl" style={{ fontFamily: "Roboto-Bold" }}>
           Welcome,
         </Text>
         <View className="px-6 w-full">
           <Text
             className="text-2xl mt-2"
             style={{
-              fontFamily: "Montserrat-Bold",
+              fontFamily: "Roboto-Bold",
             }}
           >
             What&apos;s your name?
           </Text>
           <Text
-            className="text-xs text-left text-slate-700"
+            className="text-sm text-left text-slate-700"
             style={{
-              fontFamily: "PlayfairDisplay-Regular",
+              fontFamily: "PTSans-Regular",
             }}
           >
             I’d love to call you by your name when sending reminders and
@@ -42,9 +42,9 @@ const AccountSetup = () => {
           <CustomInput />
 
           <Text
-            className="text-xs text-left text-slate-700 mt-2 mb-10"
+            className="text-sm text-left text-slate-700 mt-2 mb-10"
             style={{
-              fontFamily: "PlayfairDisplay-Regular",
+              fontFamily: "PTSans-Regular",
             }}
           >
             This can be changed later in settings.
