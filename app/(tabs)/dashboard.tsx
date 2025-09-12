@@ -88,6 +88,9 @@ const dashboard = () => {
             <CustomButton
               label="Calendar"
               startIcon={<Calendar color={"#FFF"} />}
+              onPress={() => {
+                router.push("/DashboardLinks/calendar");
+              }}
             />
           </View>
         </View>

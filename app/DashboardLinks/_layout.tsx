@@ -5,6 +5,7 @@ export default function DashboardLinksLayout() {
   return (
     <Stack>
       <Stack.Screen name="transfer" options={{ headerShown: false }} />
+      <Stack.Screen name="calendar" options={{ headerShown: false }} />
     </Stack>
   );
 };
