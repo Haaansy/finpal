@@ -8,6 +8,7 @@ import CustomButton from "../components/CustomButton";
 import CardCarousel from "../components/Dashboard/Account/CardCarousel";
 import DueDateLabel from "../components/Dashboard/Labels/DueDateLabel";
 import Logo from "../components/Logo";
+import formatCurrency from "../utils/formatCurrency";
 
 const dashboard = () => {
   const pieData = [
@@ -35,6 +36,21 @@ const dashboard = () => {
       color: "#FFA5BA",
       gradientCenterColor: "#FF7F97",
       text: "Others",
+    },
+  ];
+
+  const sampleDueDates = [
+    {
+      title: "Car Loan",
+      amountDue: 15000,
+      dueDate: "2023-10-15",
+      category: "Auto",
+    },
+    {
+      title: "Credit Card",
+      amountDue: 5000,
+      dueDate: "2023-10-20",
+      category: "Card",
     },
   ];
 
@@ -96,8 +112,15 @@ const dashboard = () => {
         </View>
 
         <View className="w-full">
-          <DueDateLabel />
-          <DueDateLabel />
+          {sampleDueDates.map((item, index) => (
+            <DueDateLabel
+              key={index}
+              title={item.title}
+              amountDue={formatCurrency(item.amountDue)}
+              dueDate={item.dueDate}
+              category={item.category}
+            />
+          ))}
         </View>
 
         <View className="flex-row justify-between items-start w-full mt-20 gap-5">

@@ -1,8 +1,12 @@
-import BottomSheet, { BottomSheetView } from "@gorhom/bottom-sheet";
+import {
+  BottomSheetModal,
+  BottomSheetModalProvider,
+  BottomSheetView,
+} from "@gorhom/bottom-sheet";
 import React, { useCallback, useRef, useState } from "react";
-import { Text } from "react-native";
 import { Calendar as RNCalendar } from "react-native-calendars";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import BottomSheetContext from "./BottomSheetContext";
 
 const Calendar = () => {
   const [selected, setSelected] = useState("");
@@ -11,16 +15,20 @@ const Calendar = () => {
   const massage = { key: "massage", color: "blue", selectedDotColor: "blue" };
   const workout = { key: "workout", color: "green" };
 
-  const bottomSheetRef = useRef<BottomSheet>(null);
+  const bottomSheetModalRef = useRef<BottomSheetModal>(null);
 
   // callbacks
-  const handleSheetChanges = useCallback((index: number) => {
-    console.log("handleSheetChanges", index);
+  const handlePresentModalPress = useCallback((day: string) => {
+    setSelected(day);
+    bottomSheetModalRef.current?.present();
   }, []);
 
   return (
     <GestureHandlerRootView>
       <RNCalendar
+        onDayPress={(day) => {
+          handlePresentModalPress(day.dateString);
+        }}
         markingType={"multi-dot"}
         markedDates={{
           [selected]: {
@@ -34,11 +42,13 @@ const Calendar = () => {
         }}
       />
 
-      <BottomSheet ref={bottomSheetRef} onChange={handleSheetChanges}>
-        <BottomSheetView>
-          <Text>Awesome 🎉</Text>
-        </BottomSheetView>
-      </BottomSheet>
+      <BottomSheetModalProvider>
+        <BottomSheetModal ref={bottomSheetModalRef}>
+          <BottomSheetView>
+            <BottomSheetContext day={selected} />
+          </BottomSheetView>
+        </BottomSheetModal>
+      </BottomSheetModalProvider>
     </GestureHandlerRootView>
   );
 };

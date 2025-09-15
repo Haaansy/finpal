@@ -1,3 +1,4 @@
+import formatCurrency from "@/app/utils/formatCurrency";
 import { Image } from "expo-image";
 import React from "react";
 import { Text, View } from "react-native";
@@ -17,7 +18,7 @@ const Card = () => {
             className="text-white text-2xl"
             style={{ fontFamily: "Roboto-Bold" }}
           >
-            P 12,000.00
+            {formatCurrency(5234.56)}
           </Text>
         </View>
         <Text
