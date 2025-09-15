@@ -1,50 +1,54 @@
-# Welcome to your Expo app 👋
+# finPal
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+finPal is your smart finance buddy 📊. With support for multiple wallets (cash, bank accounts, etc.), transaction history, categories, and reminders, it helps you stay on top of your personal budget. Built with React Native + Expo, it runs seamlessly on both iOS and Android.
 
-## Get started
+## Features
 
-1. Install dependencies
+- **Multiple Wallets**: Track cash, bank accounts, and more.
+- **Transaction History**: View and manage all your past transactions.
+- **Categories**: Organize your expenses and income for better insights.
+- **Reminders**: Set reminders to stay on top of your budget and bills.
+- **Cross-Platform**: Runs smoothly on both iOS and Android using React Native + Expo.
 
+## Getting Started
+
+1. **Install dependencies**
    ```bash
    npm install
    ```
 
-2. Start the app
-
+2. **Start the app**
    ```bash
    npx expo start
    ```
+   You can then open the app in a development build, Android emulator, iOS simulator, or [Expo Go](https://expo.dev/go).
 
-In the output, you'll find options to open the app in a
+3. **Develop**
+   - Start editing files inside the **app** directory.
+   - The project uses [file-based routing](https://docs.expo.dev/router/introduction).
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+## Technologies Used
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+- **React Native**: For building cross-platform mobile applications.
+- **Expo**: Toolchain for streamlining React Native development.
+- **TypeScript**: Strongly-typed language for more robust code.
 
-## Get a fresh project
+## Developer Notes
 
-When you're ready, run:
+- The repository is under active development. Code structure, features, and UI may change frequently.
+- Please ensure you are using the latest version of Node.js and npm for best compatibility.
+- If you encounter any issues during setup or development, check the Expo docs or open an issue in this repository.
+- **APK Download:** An APK file for Android will be uploaded here in the future for easy installation and testing.
 
-```bash
-npm run reset-project
-```
+## Learn More
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+- [Expo documentation](https://docs.expo.dev/)
+- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/)
 
-## Learn more
+## Community
 
-To learn more about developing your project with Expo, look at the following resources:
+- [Expo on GitHub](https://github.com/expo/expo)
+- [Expo Discord](https://chat.expo.dev)
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+---
+Enjoy using finPal to take control of your finances!
