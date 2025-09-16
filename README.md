@@ -52,3 +52,6 @@ finPal is your smart finance buddy 📊. With support for multiple wallets (cash
 
 ---
 Enjoy using finPal to take control of your finances!
+
+
+test!
