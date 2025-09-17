@@ -56,17 +56,17 @@ const dashboard = () => {
 
   return (
     <Container>
-      <ScrollView contentContainerClassName="flex justify-center items-start px-10 mb-10">
+      <View className="flex justify-center items-start px-10 mb-5">
         <Logo />
-
         <Text className="text-3xl" style={{ fontFamily: "Roboto-Bold" }}>
           Welcome, User!👋
         </Text>
-
         <Text className="text-lg" style={{ fontFamily: "PTSans-Regular" }}>
           Here&apos;s your financial overview for today.
         </Text>
+      </View>
 
+      <ScrollView contentContainerClassName="flex justify-center items-start px-10 mb-10">
         <View className="flex-row justify-between items-start w-full mt-10 gap-5">
           <View className="w-1/2">
             <Text className="text-lg" style={{ fontFamily: "Roboto-Bold" }}>
