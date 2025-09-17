@@ -137,6 +137,9 @@ const dashboard = () => {
             <CustomButton
               label="Transaction History"
               startIcon={<ArrowLeftRight color={"#FFF"} />}
+              onPress={() => {
+                router.push("/DashboardLinks/history");
+              }}
             />
           </View>
         </View>
