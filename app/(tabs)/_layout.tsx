@@ -1,21 +1,18 @@
 import { Tabs } from "expo-router";
-import CustomTabBar from "../components/CustomTabBar";
+import React from "react";
 
-
-export default function TabsLayout() {
-
-  function handleCentralButtonPress() {
-    console.log("Central button pressed!");
-  }
-
+const TabsLayout = () => {
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
-      }}
-      tabBar={(props) => <CustomTabBar {...props} onPressCentralButton={handleCentralButtonPress}/>}
-    >
-      <Tabs.Screen name="dashboard" />
+    <Tabs>
+      <Tabs.Screen
+        name="dashboard"
+        options={{
+          headerShown: false,
+          tabBarLabel: "Dashboard",
+        }}
+      />
     </Tabs>
   );
-}
+};
+
+export default TabsLayout;
