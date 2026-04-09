@@ -55,7 +55,7 @@ function addCalendarMonths(
 export default function PastOverviewScreen() {
   const insets = useSafeAreaInsets();
   const { colors } = useFinpalTheme();
-  const { transactions, loans, settings, ready } = useBudget();
+  const { transactions, loans, settings, ready, safeToSpendMoves } = useBudget();
   const dueDatesOverview = useDueDatesOverview();
 
   const [selYM, setSelYM] = useState<{ y: number; m: number } | null>(null);
@@ -87,6 +87,7 @@ export default function PastOverviewScreen() {
     return buildCalculationsSnapshot(
       transactions,
       loans,
+      safeToSpendMoves,
       settings.budgetPeriodEndDay,
       settings.budgetRates,
       anchorDate,
@@ -96,6 +97,7 @@ export default function PastOverviewScreen() {
     anchorDate,
     transactions,
     loans,
+    safeToSpendMoves,
     settings.budgetPeriodEndDay,
     settings.budgetRates,
     settings.carryoverSafeToSpend,
@@ -110,6 +112,7 @@ export default function PastOverviewScreen() {
     return buildCalculationsSnapshot(
       transactions,
       loans,
+      safeToSpendMoves,
       settings.budgetPeriodEndDay,
       settings.budgetRates,
       new Date(),
@@ -119,6 +122,7 @@ export default function PastOverviewScreen() {
     ready,
     transactions,
     loans,
+    safeToSpendMoves,
     settings.budgetPeriodEndDay,
     settings.budgetRates,
     settings.carryoverSafeToSpend,

@@ -1,9 +1,11 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
+import * as Notifications from 'expo-notifications';
+import * as IntentLauncher from 'expo-intent-launcher';
 import Feather from '@expo/vector-icons/Feather';
 import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { ChevronIcon } from '@/components/ChevronIcon';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -73,6 +75,8 @@ export default function SettingsScreen() {
     saveBudgetAllocationRates,
     saveCarryoverSafeToSpend,
     saveLoanNotificationSettings,
+    saveNotificationsEnabled,
+    resetAllData,
     refresh,
   } = useBudget();
   const dialog = useFinpalDialog();
@@ -87,6 +91,7 @@ export default function SettingsScreen() {
   const [openAllocation, setOpenAllocation] = useState(false);
   const [openCarryover, setOpenCarryover] = useState(false);
   const [openLoanNotify, setOpenLoanNotify] = useState(false);
+  const [openAppNotify, setOpenAppNotify] = useState(false);
   const [openAboutBudget, setOpenAboutBudget] = useState(false);
 
   const [periodMode, setPeriodMode] = useState<'eom' | 'custom'>(
@@ -114,6 +119,7 @@ export default function SettingsScreen() {
     formatIntegerAsTyped(String(settings.loanNotifyDaysBefore))
   );
   const [loanNotifyTime, setLoanNotifyTime] = useState(settings.loanNotifyTime);
+  const [appNotifyEnabled, setAppNotifyEnabled] = useState(settings.notificationsEnabled);
 
   React.useEffect(() => {
     setPeriodMode(settings.budgetPeriodEndDay === 0 ? 'eom' : 'custom');
@@ -138,6 +144,10 @@ export default function SettingsScreen() {
     setLoanNotifyDaysBefore(formatIntegerAsTyped(String(settings.loanNotifyDaysBefore)));
     setLoanNotifyTime(settings.loanNotifyTime);
   }, [settings.loanNotifyEnabled, settings.loanNotifyDaysBefore, settings.loanNotifyTime]);
+
+  React.useEffect(() => {
+    setAppNotifyEnabled(settings.notificationsEnabled);
+  }, [settings.notificationsEnabled]);
 
   const previewRates = budgetRatesFromAllocationInputs(
     parseAllocationInputsFromSettings({
@@ -246,11 +256,52 @@ export default function SettingsScreen() {
     }
   };
 
+  const saveAppNotify = async () => {
+    const wasEnabled = settings.notificationsEnabled;
+    if (appNotifyEnabled) {
+      const current = await Notifications.getPermissionsAsync();
+      if (!current.granted) {
+        const req = await Notifications.requestPermissionsAsync();
+        if (!req.granted) {
+          setAppNotifyEnabled(false);
+          await saveNotificationsEnabled(false);
+          await dialog.alert(
+            'Notifications not enabled',
+            'Permission was not granted. You can enable notifications later in system settings.',
+          );
+          return;
+        }
+      }
+    }
+    setBusy(true);
+    try {
+      await saveNotificationsEnabled(appNotifyEnabled);
+      await dialog.alert('Saved', appNotifyEnabled ? 'App notifications enabled.' : 'App notifications disabled.');
+      if (!wasEnabled && appNotifyEnabled && Platform.OS === 'android') {
+        const ok = await dialog.confirm(
+          'Disable battery optimization?',
+          'To make reminders more reliable (especially when the app is closed), set Finpal to “Don’t optimize” in Android battery settings.',
+          { cancelLabel: 'Not now', confirmLabel: 'Open settings' }
+        );
+        if (ok) {
+          // Opens Android battery optimization settings screen.
+          await IntentLauncher.startActivityAsync(
+            IntentLauncher.ActivityAction.IGNORE_BATTERY_OPTIMIZATION_SETTINGS
+          );
+        }
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const exportData = async () => {
     setBusy(true);
     try {
       const json = await buildBackupJson();
-      const name = `finpal-backup-${Date.now()}.json`;
+      const d = new Date();
+      const ts = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}`;
+      const name = `finpal_backup-${ts}.finpal`;
       const dir = FileSystem.cacheDirectory;
       if (!dir) {
         await dialog.alert('Export failed', 'Cache directory is not available on this platform.');
@@ -264,9 +315,9 @@ export default function SettingsScreen() {
         return;
       }
       await Sharing.shareAsync(path, {
-        mimeType: 'application/json',
+        mimeType: 'application/octet-stream',
         dialogTitle: 'Export Finpal backup',
-        UTI: 'public.json',
+        UTI: 'public.data',
       });
     } catch (err) {
       await dialog.alert('Export failed', err instanceof Error ? err.message : 'Unknown error');
@@ -304,6 +355,36 @@ export default function SettingsScreen() {
       }
     } catch (err) {
       await dialog.alert('Import failed', err instanceof Error ? err.message : 'Unknown error');
+    }
+  };
+
+  const doResetData = async () => {
+    const ok = await dialog.confirm(
+      'Reset all data?',
+      'This will permanently delete all local Finpal data: settings, transactions, loans, savings bubbles, and accounts. This cannot be undone.',
+      {
+        cancelLabel: 'Cancel',
+        confirmLabel: 'Reset',
+        destructive: true,
+      }
+    );
+    if (!ok) return;
+    const ok2 = await dialog.confirm('Last warning', 'Are you absolutely sure? You will lose everything on this device.', {
+      cancelLabel: 'Cancel',
+      confirmLabel: 'Reset data',
+      destructive: true,
+    });
+    if (!ok2) return;
+    setBusy(true);
+    try {
+      await resetAllData();
+      const next = await getAppSettings();
+      await setPreference(next.themePreference);
+      await dialog.alert('Reset complete', 'Finpal has been reset to a clean state.');
+    } catch (err) {
+      await dialog.alert('Reset failed', err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -353,6 +434,58 @@ export default function SettingsScreen() {
                 );
               })}
             </View>
+          </View>
+        ) : null}
+      </View>
+
+      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <CollapsibleRow
+          title="System"
+          summary={`Notifications ${settings.notificationsEnabled ? 'On' : 'Off'}`}
+          expanded={openAppNotify}
+          onToggle={() => setOpenAppNotify((v) => !v)}
+          colors={colors}
+        />
+        {openAppNotify ? (
+          <View style={[styles.cardBody, { borderTopColor: colors.border }]}>
+            <Text style={[styles.subHint, { color: colors.textMuted }]}>
+              Master switch for all reminders: daily check-ins, savings target deadlines, and loan due notifications.
+            </Text>
+            <Text style={[styles.fieldLabel, { color: colors.textMuted, marginTop: 10 }]}>App notifications</Text>
+            <View style={[styles.selectList, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
+              <Pressable
+                onPress={() => setAppNotifyEnabled(false)}
+                style={({ pressed }) => [
+                  styles.selectRow,
+                  { borderBottomColor: colors.border },
+                  pressed && { opacity: 0.85 },
+                ]}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: !appNotifyEnabled }}>
+                <Text style={[styles.selectRowLabel, { color: colors.text }]}>Off</Text>
+                <View style={styles.selectRowTrail}>
+                  {!appNotifyEnabled ? <Feather name="check" size={20} color={colors.primary} /> : null}
+                </View>
+              </Pressable>
+              <Pressable
+                onPress={() => setAppNotifyEnabled(true)}
+                style={({ pressed }) => [styles.selectRow, styles.selectRowLast, pressed && { opacity: 0.85 }]}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: appNotifyEnabled }}>
+                <Text style={[styles.selectRowLabel, { color: colors.text }]}>On</Text>
+                <View style={styles.selectRowTrail}>
+                  {appNotifyEnabled ? <Feather name="check" size={20} color={colors.primary} /> : null}
+                </View>
+              </Pressable>
+            </View>
+
+            <PrimaryButton
+              title="Save notifications"
+              onPress={saveAppNotify}
+              loading={busy}
+              variant="outline"
+              style={{ marginTop: 14 }}
+            />
           </View>
         ) : null}
       </View>
@@ -501,7 +634,7 @@ export default function SettingsScreen() {
             ) : null}
 
             <CollapsibleRow
-              title="Safe-to-spend carryover"
+              title="Auto-save unspent safe-to-spend"
               summary={settings.carryoverSafeToSpend ? 'On' : 'Off'}
               expanded={openCarryover}
               onToggle={() => setOpenCarryover((v) => !v)}
@@ -511,7 +644,7 @@ export default function SettingsScreen() {
             {openCarryover ? (
               <View style={[styles.subBody, { backgroundColor: colors.surfaceSecondary }]}>
                 <Text style={[styles.subHint, { color: colors.textMuted }]}>
-                  Default is Off. When On, any unspent safe-to-spend carries forward and accumulates across periods.
+                  Default is Off. When On, leftover safe-to-spend is swept into Savings → Future when a period closes.
                 </Text>
                 <View style={[styles.selectList, { borderColor: colors.border, backgroundColor: colors.surface }]}>
                   <Pressable
@@ -523,7 +656,7 @@ export default function SettingsScreen() {
                     ]}
                     accessibilityRole="radio"
                     accessibilityState={{ selected: !settings.carryoverSafeToSpend }}>
-                    <Text style={[styles.selectRowLabel, { color: colors.text }]}>Off (per-period)</Text>
+                    <Text style={[styles.selectRowLabel, { color: colors.text }]}>Off (no sweep)</Text>
                     <View style={styles.selectRowTrail}>
                       {!settings.carryoverSafeToSpend ? (
                         <Feather name="check" size={20} color={colors.primary} />
@@ -535,7 +668,7 @@ export default function SettingsScreen() {
                     style={({ pressed }) => [styles.selectRow, styles.selectRowLast, pressed && { opacity: 0.85 }]}
                     accessibilityRole="radio"
                     accessibilityState={{ selected: settings.carryoverSafeToSpend }}>
-                    <Text style={[styles.selectRowLabel, { color: colors.text }]}>On (carry over)</Text>
+                    <Text style={[styles.selectRowLabel, { color: colors.text }]}>On (sweep to Future)</Text>
                     <View style={styles.selectRowTrail}>
                       {settings.carryoverSafeToSpend ? (
                         <Feather name="check" size={20} color={colors.primary} />
@@ -663,6 +796,21 @@ export default function SettingsScreen() {
             </Text>
             <PrimaryButton title="Export JSON" onPress={exportData} loading={busy} style={{ marginBottom: 10 }} />
             <PrimaryButton title="Import JSON" variant="outline" onPress={importData} disabled={busy} />
+
+            <View style={{ height: 18 }} />
+            <Text style={[styles.inlineHint, { color: colors.textMuted, marginBottom: 8 }]}>
+              Danger zone
+            </Text>
+            <Text style={[styles.subHint, { color: colors.textMuted, marginBottom: 10 }]}>
+              Reset will permanently delete all local data on this device. Export a backup first if you want to keep it.
+            </Text>
+            <PrimaryButton
+              title="Reset all data"
+              variant="outline"
+              onPress={doResetData}
+              disabled={busy}
+              textStyle={{ color: colors.danger }}
+            />
           </View>
         ) : null}
       </View>

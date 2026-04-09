@@ -1,19 +1,46 @@
 import { create } from 'zustand';
 
-import type { AppSettings, BudgetAllocationInputs, LoanRow, TransactionRow } from '@/db/types';
+import type {
+  AccountRow,
+  AppSettings,
+  BudgetAllocationInputs,
+  LoanRow,
+  SafeToSpendMoveRow,
+  SavingsBubbleRow,
+  TransactionRow,
+} from '@/db/types';
+import { syncBubbleTargetReminders } from '@/notifications/bubbleTargetReminders';
+import { syncDailyLogReminders } from '@/notifications/dailyLogReminders';
 import { syncLoanDueNotifications } from '@/notifications/loanDueNotifications';
 import {
   addExpenseTransaction,
   addIncomeTransaction,
   addLoan,
+  adjustSavingsBubbleBalance,
+  createAccount as dbCreateAccount,
+  createSavingsBubble,
+  transferBetweenBubbles,
+  updateSavingsBubble,
   updateLoan,
   deleteLoan,
   deleteTransaction,
+  getAccounts,
   getAppSettings,
   getDatabase,
   getLoans,
+  getSafeToSpendMoves,
+  getSavingsBubbles,
   getSavingsBalances,
   getTransactions,
+  setSetting,
+  linkAccountToBubble,
+  linkAccountToSystemBucket,
+  transferBetweenAccountAndBubble,
+  unlinkAccount,
+  updateAccountBalance as dbUpdateAccountBalance,
+  addSafeToSpendMove,
+  resetAllData as dbResetAllData,
+  updateNotificationsEnabled,
   updateCarryoverSafeToSpend,
   markExpensePaid as persistExpensePaid,
   markExpenseUnpaid as persistExpenseUnpaid,
@@ -43,8 +70,39 @@ export interface BudgetState {
   savings: SavingsState;
   transactions: TransactionRow[];
   loans: LoanRow[];
+  bubbles: SavingsBubbleRow[];
+  accounts: AccountRow[];
+  safeToSpendMoves: SafeToSpendMoveRow[];
 
   refresh: () => Promise<void>;
+  refreshBubblesAccounts: () => Promise<void>;
+  createBubble: (input: {
+    name: string;
+    target_amount: number;
+    target_date?: string | null;
+    remind_enabled?: number;
+    remind_time?: string | null;
+  }) => Promise<void>;
+  updateBubble: (
+    id: number,
+    input: {
+      name: string;
+      target_amount: number;
+      target_date?: string | null;
+      remind_enabled?: number;
+      remind_time?: string | null;
+    }
+  ) => Promise<void>;
+  depositToBubbleFromSafeToSpend: (input: { bubbleId: number; amount: number; date: string }) => Promise<void>;
+  withdrawFromBubbleToSafeToSpend: (input: { bubbleId: number; amount: number; date: string }) => Promise<void>;
+  transferBetweenBubbles: (input: { fromBubbleId: number; toBubbleId: number; amount: number }) => Promise<void>;
+  createAccount: (input: { name: string; balance: number }) => Promise<void>;
+  updateAccountBalance: (id: number, balance: number) => Promise<void>;
+  linkAccountToBubble: (accountId: number, bubbleId: number) => Promise<void>;
+  linkAccountToSystemBucket: (accountId: number, bucket: 'future' | 'emergency' | 'travel') => Promise<void>;
+  unlinkAccount: (accountId: number) => Promise<void>;
+  transferBetweenAccountAndBubble: (input: { accountId: number; bubbleId: number; amount: number }) => Promise<void>;
+  resetAllData: () => Promise<void>;
   addIncome: (input: AddIncomeInput) => Promise<void>;
   addExpense: (input: AddExpenseInput) => Promise<void>;
   removeTransaction: (id: number) => Promise<void>;
@@ -58,12 +116,16 @@ export interface BudgetState {
   saveBudgetPeriodEndDay: (day: number) => Promise<void>;
   saveCarryoverSafeToSpend: (enabled: boolean) => Promise<void>;
   saveLoanNotificationSettings: (input: { enabled: boolean; daysBefore: number; time: string }) => Promise<void>;
+  saveNotificationsEnabled: (enabled: boolean) => Promise<void>;
   updateTransactionRow: (id: number, input: UpdateTransactionInput) => Promise<void>;
   saveBudgetAllocationRates: (input: BudgetAllocationInputs) => Promise<void>;
+  completeOnboarding: () => Promise<void>;
 }
 
 const defaultSettings: AppSettings = {
   themePreference: 'system',
+  onboardingDone: false,
+  notificationsEnabled: true,
   budgetPeriodEndDay: 0,
   carryoverSafeToSpend: false,
   loanNotifyEnabled: true,
@@ -78,11 +140,23 @@ function triggerNotificationSync(loans: LoanRow[], settings: AppSettings) {
   notificationSyncInFlight =
     notificationSyncInFlight?.catch(() => undefined).then(() =>
       syncLoanDueNotifications(loans, {
-        enabled: settings.loanNotifyEnabled,
+        enabled: settings.notificationsEnabled && settings.loanNotifyEnabled,
         daysBefore: settings.loanNotifyDaysBefore,
         time: settings.loanNotifyTime,
       })
     ) ?? null;
+}
+
+let bubbleNotificationSyncInFlight: Promise<void> | null = null;
+function triggerBubbleReminderSync(bubbles: SavingsBubbleRow[], settings: AppSettings) {
+  bubbleNotificationSyncInFlight =
+    bubbleNotificationSyncInFlight?.catch(() => undefined).then(() => syncBubbleTargetReminders(bubbles, settings.notificationsEnabled)) ?? null;
+}
+
+let dailyLogSyncInFlight: Promise<void> | null = null;
+function triggerDailyLogReminderSync(settings: AppSettings) {
+  dailyLogSyncInFlight =
+    dailyLogSyncInFlight?.catch(() => undefined).then(() => syncDailyLogReminders(settings.notificationsEnabled)) ?? null;
 }
 
 export const useBudgetStore = create<BudgetState>((set, get) => ({
@@ -91,6 +165,9 @@ export const useBudgetStore = create<BudgetState>((set, get) => ({
   savings: { emergency: 0, travel: 0, standard: 0, disposable: 0 },
   transactions: [],
   loans: [],
+  bubbles: [],
+  accounts: [],
+  safeToSpendMoves: [],
 
   refresh: async () => {
     await getDatabase();
@@ -98,8 +175,90 @@ export const useBudgetStore = create<BudgetState>((set, get) => ({
     const bal = await getSavingsBalances();
     const tx = await getTransactions();
     const ln = await getLoans();
-    set({ settings: s, savings: bal, transactions: tx, loans: ln, ready: true });
+    const [bub, acc, moves] = await Promise.all([getSavingsBubbles(), getAccounts(), getSafeToSpendMoves()]);
+    set({
+      settings: s,
+      savings: bal,
+      transactions: tx,
+      loans: ln,
+      bubbles: bub,
+      accounts: acc,
+      safeToSpendMoves: moves,
+      ready: true,
+    });
     triggerNotificationSync(ln, s);
+    triggerBubbleReminderSync(bub, s);
+    triggerDailyLogReminderSync(s);
+  },
+
+  refreshBubblesAccounts: async () => {
+    const [bub, acc, moves] = await Promise.all([getSavingsBubbles(), getAccounts(), getSafeToSpendMoves()]);
+    set({ bubbles: bub, accounts: acc, safeToSpendMoves: moves });
+    triggerBubbleReminderSync(bub, get().settings);
+  },
+
+  createBubble: async (input) => {
+    await createSavingsBubble(input);
+    await get().refreshBubblesAccounts();
+  },
+
+  updateBubble: async (id, input) => {
+    await updateSavingsBubble(id, input);
+    await get().refreshBubblesAccounts();
+  },
+
+  depositToBubbleFromSafeToSpend: async ({ bubbleId, amount, date }) => {
+    // Reduce safe-to-spend without affecting income/expense history.
+    await addSafeToSpendMove({ amount: -Math.abs(amount), date, bubble_id: bubbleId, kind: 'deposit' });
+    await adjustSavingsBubbleBalance(bubbleId, amount);
+    await get().refresh();
+  },
+
+  withdrawFromBubbleToSafeToSpend: async ({ bubbleId, amount, date }) => {
+    // Increase safe-to-spend without affecting income/expense history.
+    await addSafeToSpendMove({ amount: Math.abs(amount), date, bubble_id: bubbleId, kind: 'withdraw' });
+    await adjustSavingsBubbleBalance(bubbleId, -amount);
+    await get().refresh();
+  },
+
+  transferBetweenBubbles: async (input) => {
+    await transferBetweenBubbles(input);
+    await get().refreshBubblesAccounts();
+  },
+
+  createAccount: async (input) => {
+    await dbCreateAccount(input);
+    await get().refreshBubblesAccounts();
+  },
+
+  updateAccountBalance: async (id, balance) => {
+    await dbUpdateAccountBalance(id, balance);
+    await get().refreshBubblesAccounts();
+  },
+
+  linkAccountToBubble: async (accountId, bubbleId) => {
+    await linkAccountToBubble(accountId, bubbleId);
+    await get().refreshBubblesAccounts();
+  },
+
+  linkAccountToSystemBucket: async (accountId, bucket) => {
+    await linkAccountToSystemBucket(accountId, bucket);
+    await get().refreshBubblesAccounts();
+  },
+
+  unlinkAccount: async (accountId) => {
+    await unlinkAccount(accountId);
+    await get().refreshBubblesAccounts();
+  },
+
+  transferBetweenAccountAndBubble: async (input) => {
+    await transferBetweenAccountAndBubble(input);
+    await get().refreshBubblesAccounts();
+  },
+
+  resetAllData: async () => {
+    await dbResetAllData();
+    await get().refresh();
   },
 
   addIncome: async (input) => {
@@ -154,12 +313,21 @@ export const useBudgetStore = create<BudgetState>((set, get) => ({
     await updateLoanNotificationSettings(input);
     await get().refresh();
   },
+  saveNotificationsEnabled: async (enabled) => {
+    await updateNotificationsEnabled(enabled);
+    await get().refresh();
+  },
   updateTransactionRow: async (id, input) => {
     await persistUpdateTransaction(id, input);
     await get().refresh();
   },
   saveBudgetAllocationRates: async (input) => {
     await updateBudgetAllocationRates(input);
+    await get().refresh();
+  },
+
+  completeOnboarding: async () => {
+    await setSetting('onboarding_done', '1');
     await get().refresh();
   },
 }));

@@ -1,4 +1,4 @@
-import type { LoanRow, SavingsBalances, TransactionRow } from '@/db/types';
+import type { LoanRow, SafeToSpendMoveRow, SavingsBalances, TransactionRow } from '@/db/types';
 import type { BudgetRates } from '@/utils/budgetRates';
 import { DEFAULT_BUDGET_RATES, savingsOfFundsRate } from '@/utils/budgetRates';
 import { yearMonthFromIsoDate } from '@/utils/dates';
@@ -188,7 +188,8 @@ export function computeBalancesFromTransactions(
   transactions: TransactionRow[],
   budgetPeriodEndDay: number,
   loans: LoanRow[],
-  ratesInput?: BudgetRates
+  ratesInput?: BudgetRates,
+  opts?: { sweepUnspentSafeToSpendToFuture?: boolean }
 ): SavingsBalances {
   const r = resolveRates(ratesInput);
   const savRate = savingsOfFundsRate(r);
@@ -212,11 +213,22 @@ export function computeBalancesFromTransactions(
       .reduce((s, x) => s + x.amount, 0);
     const highPri = highPriTx + loanPay;
     const remainder = computeFunds(income, highPri);
-    disposable += remainder * r.disposableOfFunds;
+    const disposableBudget = remainder * r.disposableOfFunds;
+    if (!opts?.sweepUnspentSafeToSpendToFuture) {
+      disposable += disposableBudget;
+    }
     const sg = remainder * savRate;
     emergency += sg * r.emergencyOfSavings;
     travel += sg * r.travelOfSavings;
     standard += sg * r.futureOfSavings;
+
+    if (opts?.sweepUnspentSafeToSpendToFuture) {
+      const lowPriSpent = txs
+        .filter((x) => x.type === 'expense' && x.priority === 'low' && isExpenseSettled(x))
+        .reduce((s, x) => s + x.amount, 0);
+      const leftover = Math.max(0, disposableBudget - lowPriSpent);
+      standard += leftover;
+    }
   }
 
   return { emergency, travel, standard, disposable };
@@ -273,6 +285,14 @@ export function filterTransactionsForMonth(rows: TransactionRow[], range: MonthR
   return rows.filter(
     (t) => isDateInRange(transactionPeriodAnchor(t), range) && isExpenseSettled(t)
   );
+}
+
+export function filterSafeToSpendMovesForMonth(moves: SafeToSpendMoveRow[], range: MonthRange): SafeToSpendMoveRow[] {
+  return moves.filter((m) => isDateInRange(m.date, range));
+}
+
+export function sumSafeToSpendMovesForMonth(moves: SafeToSpendMoveRow[], range: MonthRange): number {
+  return filterSafeToSpendMovesForMonth(moves, range).reduce((s, x) => s + x.amount, 0);
 }
 
 export function sumIncomeForMonth(rows: TransactionRow[], range: MonthRange): number {

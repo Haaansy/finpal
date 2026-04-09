@@ -116,6 +116,8 @@ export default function LoanEntryScreen() {
       };
       if (isEditing) {
         await updateLoanRow(editingId, payload);
+        resetForm();
+        hydratedRef.current = null;
         router.back();
         return;
       }
