@@ -79,6 +79,12 @@ function TabsWithFab() {
             }}
           />
           <Tabs.Screen
+            name="period-detail"
+            options={{
+              href: null,
+            }}
+          />
+          <Tabs.Screen
             name="savings"
             options={{
               href: null,

@@ -260,54 +260,21 @@ export default function SavingsScreen() {
         ))}
       </View>
 
-      <View style={styles.sectionHead}>
-        <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>
-          Your bubbles
+      <View
+        style={[
+          styles.comingSoonCard,
+          { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+        ]}
+      >
+        <Text style={[styles.comingSoonTitle, { color: colors.text }]}>Your bubbles</Text>
+        <Text style={[styles.comingSoonBadge, { color: colors.textMuted, borderColor: colors.border }]}>
+          Coming soon
         </Text>
-        <Pressable
-          onPress={() => {
-            setNewName("");
-            setNewTarget("");
-            setNewTargetDate("");
-            setNewRemindTime("09:00");
-            setCreateOpen(true);
-          }}
-          style={({ pressed }) => [
-            styles.linkBtn,
-            pressed && { opacity: 0.85 },
-          ]}
-          accessibilityRole="button"
-          accessibilityLabel="Create new savings bubble"
-        >
-          <Text style={[styles.linkBtnText, { color: colors.primary }]}>
-            + Create
-          </Text>
-        </Pressable>
+        <Text style={[styles.comingSoonBody, { color: colors.textMuted }]}>
+          Custom savings bubbles are temporarily disabled while we polish this feature. System bubbles above still
+          reflect Future, Emergency, and Travel from your budget.
+        </Text>
       </View>
-
-      {bubbles.length === 0 ? (
-        <Text style={[styles.empty, { color: colors.textMuted }]}>
-          No bubbles yet. Create one and start depositing from safe-to-spend.
-        </Text>
-      ) : (
-        <View style={styles.grid}>
-          {bubbles.map((b) => (
-            <BubbleCard
-              key={b.id}
-              title={b.name}
-              subtitle={
-                b.target_amount > 0
-                  ? `${formatPhp(b.current_amount)} of ${formatPhp(b.target_amount)}`
-                  : "No target set"
-              }
-              amount={b.current_amount}
-              target={b.target_amount}
-              accent={colors.primary}
-              onPress={() => openActions(b)}
-            />
-          ))}
-        </View>
-      )}
 
       <Modal
         visible={createOpen}
@@ -758,6 +725,27 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   empty: { paddingHorizontal: 20, fontSize: 14, lineHeight: 20, marginTop: 4 },
+  comingSoonCard: {
+    marginHorizontal: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 16,
+    marginBottom: 16,
+  },
+  comingSoonTitle: { fontSize: 16, fontWeight: "800", marginBottom: 8 },
+  comingSoonBadge: {
+    alignSelf: "flex-start",
+    fontSize: 11,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 10,
+  },
+  comingSoonBody: { fontSize: 13, lineHeight: 19 },
   bubbleCard: {
     width: "100%",
     borderRadius: 18,

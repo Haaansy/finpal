@@ -364,6 +364,18 @@ export function totalMonthlyLoanRepaymentsAll(loans: LoanRow[]): number {
  * This is used for period-specific views (Home / Past Overview / future overview), so a loan due next month
  * won’t reduce this month’s period.
  */
+/** True if the loan has at least one scheduled repayment date falling inside `range`. */
+export function loanHasRepaymentIntersectingRange(loan: LoanRow, range: MonthRange): boolean {
+  if ((loan.is_recurring ?? 1) === 0) {
+    const due = (loan.repayment_date ?? '').trim();
+    if (!due || !/^\d{4}-\d{2}-\d{2}$/.test(due)) return false;
+    return isDateInRange(due, range);
+  }
+  if (loan.months_left <= 0) return false;
+  const isos = projectedLoanRepaymentIsos(loan);
+  return isos.some((iso) => isDateInRange(iso, range));
+}
+
 export function sumLoanRepaymentsDueForRange(loans: LoanRow[], range: MonthRange): number {
   let total = 0;
   for (const loan of loans) {
@@ -492,6 +504,11 @@ export type ChecklistDueFilter = 'all' | 'unpaid' | 'paid';
 /** Expense was saved with a due date (awaiting-payment / checklist bill). */
 export function isChecklistScheduledBill(t: TransactionRow): boolean {
   return t.type === 'expense' && Boolean(t.due_date?.trim());
+}
+
+/** Period-end deposits into Future / Emergency / Travel (system bubbles), created as checklist rows. */
+export function isSystemBubbleSavingsDepositDue(t: TransactionRow): boolean {
+  return isChecklistScheduledBill(t) && (t.category?.trim() === 'Savings deposit');
 }
 
 /**

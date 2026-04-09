@@ -1,3 +1,4 @@
+import { BudgetPeriodMonthYearSelector } from '@/components/BudgetPeriodMonthYearSelector';
 import { ChevronIcon } from '@/components/ChevronIcon';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { router } from 'expo-router';
@@ -7,6 +8,7 @@ import { Checkbox } from 'react-native-paper';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PriorityBadge } from '@/components/PriorityBadge';
+import { loanChecklistYmForBudgetPeriod } from '@/hooks/useDueDatesOverview';
 import type { FinpalColors } from '@/theme/colors';
 import { useBudget } from '@/context/BudgetContext';
 import { useFinpalDialog } from '@/context/FinpalDialogContext';
@@ -15,9 +17,13 @@ import type { LoanRow, TransactionRow } from '@/db/types';
 import {
   type ChecklistDueFilter,
   filterChecklistBills,
+  getBudgetPeriodRange,
+  isDateInRange,
   isExpenseSettled,
   isLoanChecklistPaidForMonth,
   isLoanOnChecklistFilter,
+  isSystemBubbleSavingsDepositDue,
+  loanHasRepaymentIntersectingRange,
 } from '@/utils/calculations';
 import { formatPhp, formatPhpLedger } from '@/utils/currency';
 import { calendarMonthKey, formatIsoDateEnPh } from '@/utils/dates';
@@ -42,6 +48,7 @@ export default function DueChecklistScreen() {
   const {
     transactions,
     loans,
+    settings,
     removeTransaction,
     markExpensePaid,
     markExpenseUnpaid,
@@ -52,26 +59,59 @@ export default function DueChecklistScreen() {
   const dialog = useFinpalDialog();
 
   const [filter, setFilter] = useState<ChecklistDueFilter>('unpaid');
+  const [selYM, setSelYM] = useState(() => {
+    const n = new Date();
+    return { y: n.getFullYear(), m: n.getMonth() };
+  });
 
-  const monthYm = calendarMonthKey();
+  const periodRange = useMemo(
+    () => getBudgetPeriodRange(settings.budgetPeriodEndDay, new Date(selYM.y, selYM.m, 15)),
+    [settings.budgetPeriodEndDay, selYM.y, selYM.m]
+  );
+  const currentPeriodRange = useMemo(
+    () => getBudgetPeriodRange(settings.budgetPeriodEndDay, new Date()),
+    [settings.budgetPeriodEndDay]
+  );
+  const isViewingCurrent =
+    periodRange.start === currentPeriodRange.start && periodRange.end === currentPeriodRange.end;
+  const loanCheckYm = isViewingCurrent
+    ? calendarMonthKey()
+    : loanChecklistYmForBudgetPeriod(periodRange);
 
-  const filteredBills = useMemo(
-    () => filterChecklistBills(transactions, filter),
-    [transactions, filter]
+  const filteredBills = useMemo(() => {
+    const base = filterChecklistBills(transactions, filter);
+    return base.filter((t) => isDateInRange((t.due_date || t.date).slice(0, 10), periodRange));
+  }, [transactions, filter, periodRange]);
+
+  const systemBubbleDeposits = useMemo(
+    () => filteredBills.filter((t) => isSystemBubbleSavingsDepositDue(t)),
+    [filteredBills]
+  );
+  const regularBills = useMemo(
+    () => filteredBills.filter((t) => !isSystemBubbleSavingsDepositDue(t)),
+    [filteredBills]
   );
 
   const filteredLoans = useMemo(() => {
     return loans
-      .filter((l) => isLoanOnChecklistFilter(l, monthYm, filter))
+      .filter(
+        (l) =>
+          loanHasRepaymentIntersectingRange(l, periodRange) &&
+          isLoanOnChecklistFilter(l, loanCheckYm, filter)
+      )
       .sort((a, b) => {
         const ad = a.repayment_date || '';
         const bd = b.repayment_date || '';
         if (ad !== bd) return ad.localeCompare(bd);
         return a.name.localeCompare(b.name);
       });
-  }, [loans, monthYm, filter]);
+  }, [loans, periodRange, loanCheckYm, filter]);
 
-  const billTotal = useMemo(() => filteredBills.reduce((s, t) => s + t.amount, 0), [filteredBills]);
+  const regularBillTotal = useMemo(() => regularBills.reduce((s, t) => s + t.amount, 0), [regularBills]);
+  const systemDepositTotal = useMemo(
+    () => systemBubbleDeposits.reduce((s, t) => s + t.amount, 0),
+    [systemBubbleDeposits]
+  );
   const loanMonthlyTotal = useMemo(
     () => filteredLoans.reduce((s, l) => s + l.monthly_repayment, 0),
     [filteredLoans]
@@ -89,23 +129,27 @@ export default function DueChecklistScreen() {
   };
 
   const toggleBill = (item: TransactionRow) => {
+    if (!isViewingCurrent) return;
     const done = isExpenseSettled(item);
     const p = done ? markExpenseUnpaid(item.id) : markExpensePaid(item.id);
     p.catch((e) => void dialog.alert('Error', e instanceof Error ? e.message : 'Could not update'));
   };
 
   const toggleLoan = (loan: LoanRow) => {
-    const done = isLoanChecklistPaidForMonth(loan, monthYm);
+    if (!isViewingCurrent) return;
+    const done = isLoanChecklistPaidForMonth(loan, loanCheckYm);
     const p = done ? markLoanRepaymentUnacknowledged(loan.id) : markLoanRepaymentAcknowledged(loan.id);
     p.catch((e) => void dialog.alert('Error', e instanceof Error ? e.message : 'Could not update'));
   };
 
+  const periodHint = `${formatIsoDateEnPh(periodRange.start)} – ${formatIsoDateEnPh(periodRange.end)}`;
+
   const emptyCopy =
     filter === 'paid'
-      ? 'No paid checklist items for this filter.'
+      ? 'No paid checklist items for this filter in this budget period.'
       : filter === 'unpaid'
-        ? `No bills or loan installments to tick for ${monthYm}.`
-        : 'No checklist items yet. Add bills with Awaiting payment or loans with due dates.';
+        ? `No unpaid bills or loan installments due in this period (${periodHint}).`
+        : 'No checklist items in this budget period. Add bills with Awaiting payment or loans with due dates.';
 
   return (
     <View style={[styles.root, { backgroundColor: colors.background, paddingTop: insets.top + 8 }]}>
@@ -123,10 +167,22 @@ export default function DueChecklistScreen() {
         </Pressable>
 
         <Text style={[styles.title, { color: colors.text }]}>Due checklist</Text>
+        <Text style={[styles.periodRangeLine, { color: colors.primary }]}>{periodHint}</Text>
         <Text style={[styles.sub, { color: colors.textMuted }]}>
-          Tap the box to mark paid or unmark. Use the filter to show all, unpaid, or paid items. Long-press a bill to
-          delete it.
+          Only items with a due date in this budget period are listed. Choose month and year to jump periods. Tap the
+          box to mark paid or unmark (current period only). Long-press a bill to delete it.
         </Text>
+
+        <BudgetPeriodMonthYearSelector value={selYM} onChange={setSelYM} colors={colors} />
+
+        {!isViewingCurrent ? (
+          <View style={[styles.readOnlyBanner, { borderColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
+            <Text style={[styles.readOnlyBannerText, { color: colors.text }]}>
+              Viewing another period — checkboxes are read-only. Select the current period (today’s month above) to mark
+              items paid.
+            </Text>
+          </View>
+        ) : null}
 
         <View style={styles.filterRow}>
           {FILTER_OPTIONS.map((opt) => {
@@ -166,12 +222,21 @@ export default function DueChecklistScreen() {
             <View style={[styles.overview, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
               <Text style={[styles.overviewLabel, { color: colors.textMuted }]}>Quick overview</Text>
               <Text style={[styles.overviewStat, { color: colors.text }]}>
-                {totalItems} item{totalItems !== 1 ? 's' : ''} · Bills {formatPhp(billTotal)}
+                {totalItems} item{totalItems !== 1 ? 's' : ''}
+                {regularBills.length > 0 ? ` · Bills ${formatPhp(regularBillTotal)}` : ''}
+                {systemBubbleDeposits.length > 0
+                  ? ` · System deposits ${formatPhp(systemDepositTotal)}`
+                  : ''}
                 {filteredLoans.length > 0 ? ` · Loans ${formatPhp(loanMonthlyTotal)}/mo` : ''}
               </Text>
-              {filteredBills.length > 0 ? (
+              {regularBills.length > 0 ? (
                 <Text style={[styles.overviewHint, { color: colors.textMuted }]}>
-                  Next bill due: {formatIsoDateEnPh(filteredBills[0].due_date || filteredBills[0].date)}
+                  Next bill due: {formatIsoDateEnPh(regularBills[0].due_date || regularBills[0].date)}
+                </Text>
+              ) : systemBubbleDeposits.length > 0 ? (
+                <Text style={[styles.overviewHint, { color: colors.textMuted }]}>
+                  Next system deposit:{' '}
+                  {formatIsoDateEnPh(systemBubbleDeposits[0].due_date || systemBubbleDeposits[0].date)}
                 </Text>
               ) : null}
               {filteredLoans.length > 0 && filteredBills.length === 0 ? (
@@ -181,10 +246,57 @@ export default function DueChecklistScreen() {
               ) : null}
             </View>
 
-            {filteredBills.length > 0 ? (
+            {systemBubbleDeposits.length > 0 ? (
               <View style={[styles.listCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Text style={[styles.listTitle, { color: colors.text }]}>
+                  Non-negotiable deposits (system bubbles)
+                </Text>
+                <Text style={[styles.loanSectionHint, { color: colors.textMuted }]}>
+                  Period-end targets for Future, Emergency, and Travel. Managed by the app; tick when paid like other
+                  dues.
+                </Text>
+                {systemBubbleDeposits.map((item, index) => (
+                  <View
+                    key={`sb-${item.id}`}
+                    style={[
+                      styles.row,
+                      index > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+                    ]}>
+                    <Checkbox
+                      status={isExpenseSettled(item) ? 'checked' : 'unchecked'}
+                      onPress={() => toggleBill(item)}
+                      disabled={!isViewingCurrent}
+                      color={colors.primary}
+                      uncheckedColor={colors.textMuted}
+                    />
+                    <View style={[styles.rowBody, !isViewingCurrent && { opacity: 0.85 }]}>
+                      <Text style={[styles.amount, { color: colors.text }]}>
+                        {formatPhpLedger(item.amount, 'expense')}
+                      </Text>
+                      <Text style={[styles.meta, { color: colors.textMuted }]} numberOfLines={2}>
+                        {item.description || 'Savings deposit'} · Due{' '}
+                        {formatIsoDateEnPh(item.due_date || item.date)}
+                        {isExpenseSettled(item) ? ` · Paid ${formatIsoDateEnPh(item.date)}` : ''}
+                      </Text>
+                      <PriorityBadge priority={item.priority ?? 'low'} colors={colors} />
+                    </View>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+
+            {regularBills.length > 0 ? (
+              <View
+                style={[
+                  styles.listCard,
+                  {
+                    backgroundColor: colors.surface,
+                    borderColor: colors.border,
+                    marginTop: systemBubbleDeposits.length ? 14 : 0,
+                  },
+                ]}>
                 <Text style={[styles.listTitle, { color: colors.text }]}>Bills</Text>
-                {filteredBills.map((item, index) => (
+                {regularBills.map((item, index) => (
                   <View
                     key={`b-${item.id}`}
                     style={[
@@ -194,13 +306,20 @@ export default function DueChecklistScreen() {
                     <Checkbox
                       status={isExpenseSettled(item) ? 'checked' : 'unchecked'}
                       onPress={() => toggleBill(item)}
+                      disabled={!isViewingCurrent}
                       color={colors.primary}
                       uncheckedColor={colors.textMuted}
                     />
                     <Pressable
-                      style={styles.rowBody}
-                      onLongPress={() =>
-                        void onDeleteBill(item.id, item.description || item.category || 'This bill')
+                      style={[styles.rowBody, !isViewingCurrent && { opacity: 0.85 }]}
+                      onLongPress={
+                        isViewingCurrent
+                          ? () =>
+                              void onDeleteBill(
+                                item.id,
+                                item.description || item.category || 'This bill'
+                              )
+                          : undefined
                       }>
                       <Text style={[styles.amount, { color: colors.text }]}>
                         {formatPhpLedger(item.amount, 'expense')}
@@ -214,9 +333,11 @@ export default function DueChecklistScreen() {
                     </Pressable>
                   </View>
                 ))}
-                <Text style={[styles.longPressHint, { color: colors.textMuted }]}>
-                  Long-press a bill to delete it.
-                </Text>
+                {isViewingCurrent ? (
+                  <Text style={[styles.longPressHint, { color: colors.textMuted }]}>
+                    Long-press a bill to delete it.
+                  </Text>
+                ) : null}
               </View>
             ) : null}
 
@@ -235,7 +356,7 @@ export default function DueChecklistScreen() {
                   {`Recurring: tick monthly. One-off: tick when done (unmark restores it to the checklist).`}
                 </Text>
                 {filteredLoans.map((loan, index) => {
-                  const checked = isLoanChecklistPaidForMonth(loan, monthYm);
+                  const checked = isLoanChecklistPaidForMonth(loan, loanCheckYm);
                   return (
                     <View
                       key={`l-${loan.id}`}
@@ -246,10 +367,11 @@ export default function DueChecklistScreen() {
                       <Checkbox
                         status={checked ? 'checked' : 'unchecked'}
                         onPress={() => toggleLoan(loan)}
+                        disabled={!isViewingCurrent}
                         color={colors.primary}
                         uncheckedColor={colors.textMuted}
                       />
-                      <View style={styles.rowBody}>
+                      <View style={[styles.rowBody, !isViewingCurrent && { opacity: 0.85 }]}>
                         <Text style={[styles.amount, { color: colors.text }]}>
                           {formatPhp(loan.monthly_repayment)}/mo
                         </Text>
@@ -288,8 +410,16 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   backText: { fontSize: 16, fontWeight: '600' },
-  title: { fontSize: 22, fontWeight: '800', marginBottom: 8 },
+  title: { fontSize: 22, fontWeight: '800', marginBottom: 4 },
+  periodRangeLine: { fontSize: 14, fontWeight: '700', marginBottom: 8 },
   sub: { fontSize: 13, lineHeight: 18, marginBottom: 14 },
+  readOnlyBanner: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 12,
+    marginBottom: 14,
+  },
+  readOnlyBannerText: { fontSize: 13, lineHeight: 18, fontWeight: '600' },
   filterRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',

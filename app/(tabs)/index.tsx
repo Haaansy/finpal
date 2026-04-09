@@ -1,5 +1,5 @@
 import FontAwesome from "@expo/vector-icons/FontAwesome";
-import { Link } from "expo-router";
+import { Link, router } from "expo-router";
 import React from "react";
 import {
   ActivityIndicator,
@@ -42,11 +42,13 @@ export default function DashboardScreen() {
   } = useCalculations();
 
   const currentRange = getBudgetPeriodRange(settings.budgetPeriodEndDay, new Date());
-  const activeLoans = loans.filter((l) => {
-    if (l.months_left <= 0) return false;
-    const dueIsos = projectedLoanRepaymentIsos(l);
-    return dueIsos.some((iso) => isDateInRange(iso, currentRange));
-  });
+  const activeLoans = loans
+    .filter((l) => {
+      if (l.months_left <= 0) return false;
+      const dueIsos = projectedLoanRepaymentIsos(l);
+      return dueIsos.some((iso) => isDateInRange(iso, currentRange));
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   if (!ready) {
     return (
@@ -171,28 +173,27 @@ export default function DashboardScreen() {
             </Text>
           </Pressable>
         </Link>
-        <Link href="/accounts" asChild>
-          <Pressable
-            style={StyleSheet.flatten([
-              styles.quickChip,
-              { backgroundColor: colors.surface, borderColor: colors.border },
-            ])}
-            accessibilityRole="button"
-            accessibilityLabel="Open accounts"
+        <View
+          style={StyleSheet.flatten([
+            styles.quickChip,
+            styles.quickChipDisabled,
+            { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+          ])}
+          accessibilityRole="text"
+          accessibilityLabel="Accounts coming soon">
+          <View
+            style={[
+              styles.quickChipIcon,
+              { backgroundColor: colors.surfaceSecondary },
+            ]}
           >
-            <View
-              style={[
-                styles.quickChipIcon,
-                { backgroundColor: colors.surfaceSecondary },
-              ]}
-            >
-              <FontAwesome name="bank" size={18} color={colors.primary} />
-            </View>
-            <Text style={[styles.quickChipText, { color: colors.text }]}>
-              Accounts
-            </Text>
-          </Pressable>
-        </Link>
+            <FontAwesome name="bank" size={18} color={colors.textMuted} />
+          </View>
+          <View>
+            <Text style={[styles.quickChipText, { color: colors.textMuted }]}>Accounts</Text>
+            <Text style={[styles.quickChipSoon, { color: colors.textMuted }]}>Soon</Text>
+          </View>
+        </View>
       </ScrollView>
 
       <Text style={[styles.sectionTitle, { color: colors.text }]}>
@@ -204,110 +205,149 @@ export default function DashboardScreen() {
           { backgroundColor: colors.surface, borderColor: colors.border },
         ]}
       >
-        <View style={styles.overviewBlock}>
-          <View style={styles.overviewBlockHead}>
-            <FontAwesome
-              name="calendar"
-              size={16}
-              color={colors.primary}
-              style={styles.overviewBlockIcon}
-            />
-            <Text style={[styles.overviewBlockTitle, { color: colors.text }]}>
-              Due dates
-            </Text>
-          </View>
-          <Text style={[styles.overviewBody, { color: colors.textMuted }]}>
-            {dueDatesOverview}
-          </Text>
-        </View>
+        <Link href="/due-checklist" asChild>
+          <Pressable
+            style={({ pressed }) => [pressed && { opacity: 0.88 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Open due checklist"
+          >
+            <View style={styles.overviewBlock}>
+              <View style={styles.overviewBlockHead}>
+                <FontAwesome
+                  name="calendar"
+                  size={16}
+                  color={colors.primary}
+                  style={styles.overviewBlockIcon}
+                />
+                <Text style={[styles.overviewBlockTitle, { color: colors.text }]}>
+                  Due dates
+                </Text>
+                <FontAwesome name="chevron-right" size={12} color={colors.textMuted} style={{ marginLeft: 4 }} />
+              </View>
+              <Text style={[styles.overviewBody, { color: colors.textMuted }]}>
+                {dueDatesOverview}
+              </Text>
+            </View>
+          </Pressable>
+        </Link>
 
         <View
           style={[styles.overviewDivider, { backgroundColor: colors.border }]}
         />
 
-        <View style={styles.overviewBlock}>
-          <View style={styles.overviewBlockHead}>
-            <FontAwesome
-              name="money"
-              size={16}
-              color={colors.primary}
-              style={styles.overviewBlockIcon}
-            />
-            <Text style={[styles.overviewBlockTitle, { color: colors.text }]}>
-              Income
+        <Pressable
+          onPress={() =>
+            router.push({ pathname: "/period-detail", params: { kind: "income" } })
+          }
+          style={({ pressed }) => [pressed && { opacity: 0.88 }]}
+          accessibilityRole="button"
+          accessibilityLabel="View income this period"
+        >
+          <View style={styles.overviewBlock}>
+            <View style={styles.overviewBlockHead}>
+              <FontAwesome
+                name="money"
+                size={16}
+                color={colors.primary}
+                style={styles.overviewBlockIcon}
+              />
+              <Text style={[styles.overviewBlockTitle, { color: colors.text }]}>
+                Income
+              </Text>
+              <FontAwesome name="chevron-right" size={12} color={colors.textMuted} style={{ marginLeft: 4 }} />
+            </View>
+            <Text style={[styles.overviewValue, { color: colors.text }]}>
+              {formatPhp(incomeMonth)}
+            </Text>
+            <Text style={[styles.overviewMeta, { color: colors.textMuted }]}>
+              Settled income this budget period
             </Text>
           </View>
-          <Text style={[styles.overviewValue, { color: colors.text }]}>
-            {formatPhp(incomeMonth)}
-          </Text>
-          <Text style={[styles.overviewMeta, { color: colors.textMuted }]}>
-            Settled income this budget period
-          </Text>
-        </View>
+        </Pressable>
 
         <View
           style={[styles.overviewDivider, { backgroundColor: colors.border }]}
         />
 
-        <View style={styles.overviewBlock}>
-          <View style={styles.overviewBlockHead}>
-            <FontAwesome
-              name="flag"
-              size={16}
-              color={colors.danger}
-              style={styles.overviewBlockIcon}
-            />
-            <Text style={[styles.overviewBlockTitle, { color: colors.text }]}>
-              High Priority Expense
+        <Pressable
+          onPress={() =>
+            router.push({ pathname: "/period-detail", params: { kind: "high" } })
+          }
+          style={({ pressed }) => [pressed && { opacity: 0.88 }]}
+          accessibilityRole="button"
+          accessibilityLabel="View high priority expenses this period"
+        >
+          <View style={styles.overviewBlock}>
+            <View style={styles.overviewBlockHead}>
+              <FontAwesome
+                name="flag"
+                size={16}
+                color={colors.danger}
+                style={styles.overviewBlockIcon}
+              />
+              <Text style={[styles.overviewBlockTitle, { color: colors.text }]}>
+                High Priority Expense
+              </Text>
+              <FontAwesome name="chevron-right" size={12} color={colors.textMuted} style={{ marginLeft: 4 }} />
+            </View>
+            <Text style={[styles.overviewValue, { color: colors.text }]}>
+              {formatPhp(highPriMonth)}
             </Text>
+            <Text style={[styles.overviewMeta, { color: colors.textMuted }]}>
+              {highPriMonth > 0
+                ? `${formatPhp(highPriBillsTotal)} high-priority bills + ${formatPhp(loanPay)} loan repayments`
+                : "No high-priority bills or loans on file this period"}
+            </Text>
+            {(highPriExpensesMonth > 0 || unpaidHighPriExpensesMonth > 0) && (
+              <Text style={[styles.overviewDetail, { color: colors.textMuted }]}>
+                {[
+                  highPriExpensesMonth > 0
+                    ? `${formatPhp(highPriExpensesMonth)} paid`
+                    : null,
+                  unpaidHighPriExpensesMonth > 0
+                    ? `${formatPhp(unpaidHighPriExpensesMonth)} awaiting`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </Text>
+            )}
           </View>
-          <Text style={[styles.overviewValue, { color: colors.text }]}>
-            {formatPhp(highPriMonth)}
-          </Text>
-          <Text style={[styles.overviewMeta, { color: colors.textMuted }]}>
-            {highPriMonth > 0
-              ? `${formatPhp(highPriBillsTotal)} high-priority bills + ${formatPhp(loanPay)} loan repayments`
-              : "No high-priority bills or loans on file this period"}
-          </Text>
-          {(highPriExpensesMonth > 0 || unpaidHighPriExpensesMonth > 0) && (
-            <Text style={[styles.overviewDetail, { color: colors.textMuted }]}>
-              {[
-                highPriExpensesMonth > 0
-                  ? `${formatPhp(highPriExpensesMonth)} paid`
-                  : null,
-                unpaidHighPriExpensesMonth > 0
-                  ? `${formatPhp(unpaidHighPriExpensesMonth)} awaiting`
-                  : null,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </Text>
-          )}
-        </View>
+        </Pressable>
 
         <View
           style={[styles.overviewDivider, { backgroundColor: colors.border }]}
         />
 
-        <View style={styles.overviewBlock}>
-          <View style={styles.overviewBlockHead}>
-            <FontAwesome
-              name="leaf"
-              size={16}
-              color={colors.primary}
-              style={styles.overviewBlockIcon}
-            />
-            <Text style={[styles.overviewBlockTitle, { color: colors.text }]}>
-              Low Priority Expense
+        <Pressable
+          onPress={() =>
+            router.push({ pathname: "/period-detail", params: { kind: "low" } })
+          }
+          style={({ pressed }) => [pressed && { opacity: 0.88 }]}
+          accessibilityRole="button"
+          accessibilityLabel="View low priority expenses this period"
+        >
+          <View style={styles.overviewBlock}>
+            <View style={styles.overviewBlockHead}>
+              <FontAwesome
+                name="leaf"
+                size={16}
+                color={colors.primary}
+                style={styles.overviewBlockIcon}
+              />
+              <Text style={[styles.overviewBlockTitle, { color: colors.text }]}>
+                Low Priority Expense
+              </Text>
+              <FontAwesome name="chevron-right" size={12} color={colors.textMuted} style={{ marginLeft: 4 }} />
+            </View>
+            <Text style={[styles.overviewValue, { color: colors.text }]}>
+              {formatPhp(lowPriMonth)}
+            </Text>
+            <Text style={[styles.overviewMeta, { color: colors.textMuted }]}>
+              This budget period
             </Text>
           </View>
-          <Text style={[styles.overviewValue, { color: colors.text }]}>
-            {formatPhp(lowPriMonth)}
-          </Text>
-          <Text style={[styles.overviewMeta, { color: colors.textMuted }]}>
-            This budget period
-          </Text>
-        </View>
+        </Pressable>
       </View>
 
       <SavingsProgress />
@@ -392,6 +432,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   quickChipText: { fontSize: 15, fontWeight: "700" },
+  quickChipSoon: { fontSize: 11, fontWeight: "700", marginTop: 2, textTransform: "uppercase" },
+  quickChipDisabled: { opacity: 0.85 },
   sectionTitle: {
     fontSize: 18,
     fontWeight: "700",

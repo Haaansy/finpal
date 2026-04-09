@@ -511,11 +511,13 @@ const styles = StyleSheet.create({
   filters: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 12 },
   chip: {
     paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderRadius: 20,
     borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  chipText: { fontSize: 13 },
+  chipText: { fontSize: 13, textAlign: "center", lineHeight: 18 },
   listSectionLabel: {
     fontSize: 12,
     fontWeight: "700",

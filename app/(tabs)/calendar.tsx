@@ -8,11 +8,17 @@ import { useBudget } from "@/context/BudgetContext";
 import { useFinpalTheme } from "@/context/FinpalThemeContext";
 import type { LoanRow, TransactionRow } from "@/db/types";
 import type { FinpalColors } from "@/theme/colors";
-import { isExpenseSettled } from "@/utils/calculations";
+import {
+  getBudgetPeriodRange,
+  isDateInRange,
+  isExpenseSettled,
+  isSystemBubbleSavingsDepositDue,
+} from "@/utils/calculations";
 import { formatPhp } from "@/utils/currency";
 import {
   calendarMonthKey,
   formatIsoDateEnPh,
+  formatYearMonthHeading,
   isoFromLocalDate,
 } from "@/utils/dates";
 import {
@@ -36,7 +42,7 @@ function isoDay(year: number, monthIndex: number, day: number): string {
 export default function CalendarScreen() {
   const insets = useSafeAreaInsets();
   const { colors } = useFinpalTheme();
-  const { loans, transactions, ready } = useBudget();
+  const { loans, transactions, settings, ready } = useBudget();
 
   const [visibleMonth, setVisibleMonth] = useState(() => {
     const n = new Date();
@@ -52,72 +58,129 @@ export default function CalendarScreen() {
   const dim = daysInMonth(y, m0);
   const firstWeekday = new Date(y, m0, 1).getDay();
 
+  const budgetPeriodForVisibleMonth = useMemo(
+    () => getBudgetPeriodRange(settings.budgetPeriodEndDay, new Date(y, m0, 15)),
+    [settings.budgetPeriodEndDay, y, m0],
+  );
+
   const { dueDates, incomeDates } = useMemo(() => {
     const due = new Set<string>();
     const inc = new Set<string>();
+    const period = budgetPeriodForVisibleMonth;
     for (const l of loans) {
       for (const iso of projectedLoanRepaymentIsos(l)) {
-        if (iso.startsWith(ymPrefix)) due.add(iso);
+        if (
+          iso.startsWith(ymPrefix) &&
+          /^\d{4}-\d{2}-\d{2}$/.test(iso) &&
+          isDateInRange(iso, period)
+        )
+          due.add(iso);
       }
     }
     for (const t of transactions) {
       if (t.type === "income") {
         const key = t.date.slice(0, 10);
-        if (/^\d{4}-\d{2}-\d{2}$/.test(key) && key.startsWith(ymPrefix))
+        if (
+          /^\d{4}-\d{2}-\d{2}$/.test(key) &&
+          key.startsWith(ymPrefix) &&
+          isDateInRange(key, period)
+        )
           inc.add(key);
         continue;
       }
       if (t.type !== "expense" || isExpenseSettled(t)) continue;
       const key = (t.due_date || t.date).slice(0, 10);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(key) && key.startsWith(ymPrefix)) {
+      if (
+        /^\d{4}-\d{2}-\d{2}$/.test(key) &&
+        key.startsWith(ymPrefix) &&
+        isDateInRange(key, period)
+      ) {
         due.add(key);
       }
     }
     return { dueDates: due, incomeDates: inc };
-  }, [loans, transactions, ymPrefix]);
+  }, [loans, transactions, ymPrefix, budgetPeriodForVisibleMonth]);
 
   const loansThisMonth = useMemo(
     () =>
-      loans.filter(
-        (l) => l.months_left > 0 && loanHasRepaymentInYearMonth(l, ymPrefix),
-      ),
-    [loans, ymPrefix],
+      loans.filter((l) => {
+        if (l.months_left <= 0) return false;
+        if (!loanHasRepaymentInYearMonth(l, ymPrefix)) return false;
+        return projectedLoanRepaymentIsos(l).some(
+          (iso) =>
+            iso.startsWith(ymPrefix) &&
+            /^\d{4}-\d{2}-\d{2}$/.test(iso) &&
+            isDateInRange(iso, budgetPeriodForVisibleMonth),
+        );
+      }),
+    [loans, ymPrefix, budgetPeriodForVisibleMonth],
   );
 
   const incomesThisMonth = useMemo(() => {
+    const period = budgetPeriodForVisibleMonth;
     return transactions
-      .filter((t) => t.type === "income" && t.date.startsWith(ymPrefix))
+      .filter((t) => {
+        if (t.type !== "income") return false;
+        const key = t.date.slice(0, 10);
+        return (
+          /^\d{4}-\d{2}-\d{2}$/.test(key) &&
+          key.startsWith(ymPrefix) &&
+          isDateInRange(key, period)
+        );
+      })
       .sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
-  }, [transactions, ymPrefix]);
+  }, [transactions, ymPrefix, budgetPeriodForVisibleMonth]);
 
-  const billsThisMonth = useMemo(() => {
+  const billsThisMonthAll = useMemo(() => {
+    const period = budgetPeriodForVisibleMonth;
     return transactions
       .filter((t) => {
         if (t.type !== "expense" || isExpenseSettled(t)) return false;
         const key = (t.due_date || t.date).slice(0, 10);
-        return /^\d{4}-\d{2}-\d{2}$/.test(key) && key.startsWith(ymPrefix);
+        return (
+          /^\d{4}-\d{2}-\d{2}$/.test(key) &&
+          key.startsWith(ymPrefix) &&
+          isDateInRange(key, period)
+        );
       })
       .sort((a, b) =>
         (a.due_date || a.date).localeCompare(b.due_date || b.date),
       );
-  }, [transactions, ymPrefix]);
+  }, [transactions, ymPrefix, budgetPeriodForVisibleMonth]);
 
-  const { loansOnDay, billsOnDay, incomesOnDay } = useMemo(() => {
+  const systemDepositsThisMonth = useMemo(
+    () => billsThisMonthAll.filter((t) => isSystemBubbleSavingsDepositDue(t)),
+    [billsThisMonthAll],
+  );
+  const regularBillsThisMonth = useMemo(
+    () => billsThisMonthAll.filter((t) => !isSystemBubbleSavingsDepositDue(t)),
+    [billsThisMonthAll],
+  );
+
+  const { loansOnDay, billsOnDay, systemDepositsOnDay, incomesOnDay } = useMemo(() => {
     const day = selectedIso;
+    const period = budgetPeriodForVisibleMonth;
     const ln = loans.filter(
-      (l) => l.months_left > 0 && loanHasRepaymentOnCalendarDay(l, day),
+      (l) =>
+        l.months_left > 0 &&
+        loanHasRepaymentOnCalendarDay(l, day) &&
+        isDateInRange(day, period),
     );
-    const bl = transactions.filter(
-      (t) =>
-        t.type === "expense" &&
-        !isExpenseSettled(t) &&
-        (t.due_date || t.date).slice(0, 10) === day,
-    );
+    const bl = transactions.filter((t) => {
+      if (t.type !== "expense" || isExpenseSettled(t)) return false;
+      const key = (t.due_date || t.date).slice(0, 10);
+      return key === day && isDateInRange(key, period);
+    });
+    const sys = bl.filter((t) => isSystemBubbleSavingsDepositDue(t));
+    const reg = bl.filter((t) => !isSystemBubbleSavingsDepositDue(t));
     const inc = transactions.filter(
-      (t) => t.type === "income" && t.date.slice(0, 10) === day,
+      (t) =>
+        t.type === "income" &&
+        t.date.slice(0, 10) === day &&
+        isDateInRange(t.date.slice(0, 10), period),
     );
-    return { loansOnDay: ln, billsOnDay: bl, incomesOnDay: inc };
-  }, [loans, transactions, selectedIso]);
+    return { loansOnDay: ln, billsOnDay: reg, systemDepositsOnDay: sys, incomesOnDay: inc };
+  }, [loans, transactions, selectedIso, budgetPeriodForVisibleMonth]);
 
   const todayIso = isoFromLocalDate(new Date());
 
@@ -209,8 +272,11 @@ export default function CalendarScreen() {
     >
       <Text style={[styles.screenTitle, { color: colors.text }]}>Calendar</Text>
       <Text style={[styles.screenSub, { color: colors.textMuted }]}>
-        Loan repayment dates and unpaid bills by due date. Dots mark days with
-        something due.
+        Dues in the budget period that contains{" "}
+        {formatYearMonthHeading(`${y}-${String(m0 + 1).padStart(2, "0")}`)} (
+        {formatIsoDateEnPh(budgetPeriodForVisibleMonth.start)} –{" "}
+        {formatIsoDateEnPh(budgetPeriodForVisibleMonth.end)}). Change month with
+        the arrows to move the calendar and this period.
       </Text>
 
       {!ready ? (
@@ -256,7 +322,8 @@ export default function CalendarScreen() {
             </View>
 
             {loansThisMonth.length > 0 ||
-            billsThisMonth.length > 0 ||
+            systemDepositsThisMonth.length > 0 ||
+            regularBillsThisMonth.length > 0 ||
             incomesThisMonth.length > 0 ? (
               <View
                 style={[styles.loansStrip, { borderTopColor: colors.border }]}
@@ -374,14 +441,73 @@ export default function CalendarScreen() {
                     </ScrollView>
                   </>
                 ) : null}
-                {billsThisMonth.length > 0 ? (
+                {systemDepositsThisMonth.length > 0 ? (
                   <>
                     <Text
                       style={[
                         styles.loansStripLabel,
                         {
                           color: colors.textMuted,
-                          marginTop: loansThisMonth.length > 0 ? 12 : 0,
+                          marginTop:
+                            incomesThisMonth.length > 0 || loansThisMonth.length > 0
+                              ? 12
+                              : 0,
+                        },
+                      ]}
+                    >
+                      Non-negotiable deposits (system bubbles)
+                    </Text>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                    >
+                      {systemDepositsThisMonth.map((bill) => (
+                        <View
+                          key={bill.id}
+                          style={[
+                            styles.loanChip,
+                            {
+                              borderColor: colors.primary,
+                              backgroundColor: `${colors.primary}14`,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.loanChipName,
+                              { color: colors.text },
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {bill.description?.trim() || "Savings deposit"}
+                          </Text>
+                          <Text
+                            style={[
+                              styles.loanChipMeta,
+                              { color: colors.textMuted },
+                            ]}
+                          >
+                            {formatIsoDateEnPh(bill.due_date || bill.date)} ·{" "}
+                            {formatPhp(bill.amount)}
+                          </Text>
+                        </View>
+                      ))}
+                    </ScrollView>
+                  </>
+                ) : null}
+                {regularBillsThisMonth.length > 0 ? (
+                  <>
+                    <Text
+                      style={[
+                        styles.loansStripLabel,
+                        {
+                          color: colors.textMuted,
+                          marginTop:
+                            incomesThisMonth.length > 0 ||
+                            loansThisMonth.length > 0 ||
+                            systemDepositsThisMonth.length > 0
+                              ? 12
+                              : 0,
                         },
                       ]}
                     >
@@ -391,7 +517,7 @@ export default function CalendarScreen() {
                       horizontal
                       showsHorizontalScrollIndicator={false}
                     >
-                      {billsThisMonth.map((bill) => (
+                      {regularBillsThisMonth.map((bill) => (
                         <View
                           key={bill.id}
                           style={[
@@ -461,6 +587,7 @@ export default function CalendarScreen() {
             </Text>
             {loansOnDay.length === 0 &&
             billsOnDay.length === 0 &&
+            systemDepositsOnDay.length === 0 &&
             incomesOnDay.length === 0 ? (
               <Text style={[styles.emptyDue, { color: colors.textMuted }]}>
                 Nothing due on this date.
@@ -475,12 +602,12 @@ export default function CalendarScreen() {
                     onPress={() => router.push("/transactions")}
                   />
                 ))}
-                {loansOnDay.map((loan) => (
-                  <DueLoanRow
-                    key={`l-${loan.id}`}
-                    loan={loan}
+                {systemDepositsOnDay.map((bill) => (
+                  <DueSystemBubbleDepositRow
+                    key={`sb-${bill.id}`}
+                    bill={bill}
                     colors={colors}
-                    onPress={() => router.push("/loans")}
+                    onPress={() => router.push("/due-checklist")}
                   />
                 ))}
                 {billsOnDay.map((bill) => (
@@ -489,6 +616,14 @@ export default function CalendarScreen() {
                     bill={bill}
                     colors={colors}
                     onPress={() => router.push("/due-checklist")}
+                  />
+                ))}
+                {loansOnDay.map((loan) => (
+                  <DueLoanRow
+                    key={`l-${loan.id}`}
+                    loan={loan}
+                    colors={colors}
+                    onPress={() => router.push("/loans")}
                   />
                 ))}
               </>
@@ -569,6 +704,50 @@ function DueBillRow({
       </View>
       <Text style={[styles.dueTitle, { color: colors.text }]}>
         {bill.description?.trim() || "Expense"}
+      </Text>
+      <Text style={[styles.dueMeta, { color: colors.textMuted }]}>
+        {formatPhp(bill.amount)}
+        {bill.priority ? ` · ${bill.priority} priority` : ""}
+      </Text>
+    </Pressable>
+  );
+}
+
+function DueSystemBubbleDepositRow({
+  bill,
+  colors,
+  onPress,
+}: {
+  bill: TransactionRow;
+  colors: FinpalColors;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.dueCard,
+        { borderColor: colors.border, backgroundColor: colors.surface },
+        pressed && { opacity: 0.85 },
+      ]}
+      accessibilityRole="button"
+      accessibilityLabel="Open due checklist for system bubble deposit"
+    >
+      <View
+        style={[
+          styles.badge,
+          {
+            backgroundColor: `${colors.primary}22`,
+            borderColor: colors.primary,
+          },
+        ]}
+      >
+        <Text style={[styles.badgeText, { color: colors.primary }]}>
+          System bubble
+        </Text>
+      </View>
+      <Text style={[styles.dueTitle, { color: colors.text }]}>
+        {bill.description?.trim() || "Savings deposit"}
       </Text>
       <Text style={[styles.dueMeta, { color: colors.textMuted }]}>
         {formatPhp(bill.amount)}

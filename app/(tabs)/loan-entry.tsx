@@ -80,19 +80,25 @@ export default function LoanEntryScreen() {
 
   const submit = async () => {
     const t = parseCurrencyInput(total);
-    const m = parseCurrencyInput(monthly);
+    const m = isRecurring ? parseCurrencyInput(monthly) : t;
     const mo = isRecurring ? parseIntegerInput(monthsLeft) : 1;
     if (!name.trim()) {
       await dialog.alert('Name required', 'Enter a name for this loan.');
       return;
     }
-    if (!Number.isFinite(t) || t <= 0 || !Number.isFinite(m) || m <= 0) {
-      await dialog.alert('Check numbers', 'Total and monthly repayment must be positive.');
+    if (!Number.isFinite(t) || t <= 0) {
+      await dialog.alert('Check numbers', 'Total amount must be positive.');
       return;
     }
-    if (isRecurring && (!Number.isFinite(mo) || mo < 0)) {
-      await dialog.alert('Check numbers', 'Months remaining must be 0 or more.');
-      return;
+    if (isRecurring) {
+      if (!Number.isFinite(m) || m <= 0) {
+        await dialog.alert('Check numbers', 'Monthly repayment must be positive.');
+        return;
+      }
+      if (!Number.isFinite(mo) || mo < 0) {
+        await dialog.alert('Check numbers', 'Months remaining must be 0 or more.');
+        return;
+      }
     }
     const rd = repaymentDate.trim();
     if (rd && !parseIsoToDate(rd)) {
@@ -154,9 +160,9 @@ export default function LoanEntryScreen() {
       </Pressable>
       <Text style={[styles.title, { color: colors.text }]}>{isEditing ? 'Edit loan' : 'Add loan'}</Text>
       <Text style={[styles.sub, { color: colors.textMuted }]}>
-        Monthly repayment counts toward high-priority outflows. For one-off loans, the due date controls when the
-        repayment appears on your checklist. Recurring loans without a date get the next same calendar day in a month
-        automatically.
+        {isRecurring
+          ? 'Monthly repayment counts toward high-priority outflows. Without a repayment date, the next same calendar day next month is used.'
+          : 'One-off loans use the total amount as a single repayment. The due date controls when it appears on your checklist until you mark it paid.'}
       </Text>
 
       <Text style={[styles.label, { color: colors.textMuted }]}>Name</Text>
@@ -177,15 +183,6 @@ export default function LoanEntryScreen() {
         placeholderTextColor={colors.textMuted}
       />
 
-      <Text style={[styles.label, { color: colors.textMuted }]}>Monthly repayment (PHP)</Text>
-      <CurrencyTextInput
-        value={monthly}
-        onChangeText={setMonthly}
-        colors={colors}
-        placeholder="0.00"
-        placeholderTextColor={colors.textMuted}
-      />
-
       <View style={[styles.recRow, { borderColor: colors.border, backgroundColor: colors.surface }]}>
         <View style={{ flex: 1, marginRight: 12 }}>
           <Text style={[styles.recTitle, { color: colors.text }]}>Recurring monthly</Text>
@@ -198,12 +195,28 @@ export default function LoanEntryScreen() {
           value={isRecurring}
           onValueChange={(v) => {
             setIsRecurring(v);
-            if (!v) setMonthsLeft('1');
+            if (!v) {
+              setMonthsLeft('1');
+              setMonthly('');
+            }
           }}
           trackColor={{ false: colors.border, true: `${colors.primary}88` }}
           thumbColor={isRecurring ? colors.primary : colors.surfaceSecondary}
         />
       </View>
+
+      {isRecurring ? (
+        <>
+          <Text style={[styles.label, { color: colors.textMuted }]}>Monthly repayment (PHP)</Text>
+          <CurrencyTextInput
+            value={monthly}
+            onChangeText={setMonthly}
+            colors={colors}
+            placeholder="0.00"
+            placeholderTextColor={colors.textMuted}
+          />
+        </>
+      ) : null}
 
       <DatePickerField
         key={dateFieldKey}
@@ -216,29 +229,20 @@ export default function LoanEntryScreen() {
       <Text style={[styles.hint, { color: colors.textMuted }]}>
         {isRecurring
           ? 'Optional. If empty, the next due date is chosen automatically (same day next month).'
-          : 'Required. The checklist includes this loan from the due month until you mark it paid.'}
+          : 'Required. The checklist includes this loan from the due month until you mark it paid. Repayment amount matches the total above.'}
       </Text>
 
-      <Text
-        style={[
-          styles.label,
-          { color: colors.textMuted, opacity: isRecurring ? 1 : 0.45 },
-        ]}>
-        Months remaining
-      </Text>
-      <IntegerTextInput
-        value={isRecurring ? monthsLeft : '1'}
-        onChangeText={setMonthsLeft}
-        colors={colors}
-        placeholder="0"
-        placeholderTextColor={colors.textMuted}
-        editable={isRecurring}
-        style={{ opacity: isRecurring ? 1 : 0.55 }}
-      />
-      {!isRecurring ? (
-        <Text style={[styles.hint, { color: colors.textMuted }]}>
-          One-off loans always use 1 payment in the budget until you tick them paid on the checklist.
-        </Text>
+      {isRecurring ? (
+        <>
+          <Text style={[styles.label, { color: colors.textMuted }]}>Months remaining</Text>
+          <IntegerTextInput
+            value={monthsLeft}
+            onChangeText={setMonthsLeft}
+            colors={colors}
+            placeholder="0"
+            placeholderTextColor={colors.textMuted}
+          />
+        </>
       ) : null}
 
       {!isEditing ? (

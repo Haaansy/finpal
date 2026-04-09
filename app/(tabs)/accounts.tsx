@@ -2,7 +2,9 @@ import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { router } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import {
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -169,62 +171,66 @@ export default function AccountsScreen() {
 
       {/* Create account modal */}
       <Modal visible={createOpen} transparent animationType="fade" onRequestClose={() => setCreateOpen(false)}>
-        <Pressable style={[styles.backdrop, { minHeight: height }]} onPress={() => setCreateOpen(false)}>
-          <Pressable
-            style={[styles.sheet, { backgroundColor: colors.surface, borderColor: colors.border }]}
-            onPress={(e) => e.stopPropagation()}
-          >
-            <Text style={[styles.sheetTitle, { color: colors.text }]}>Create account</Text>
-            <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Name</Text>
-            <TextInput
-              value={newName}
-              onChangeText={setNewName}
-              placeholder="e.g. BPI Savings"
-              placeholderTextColor={colors.textMuted}
-              style={[
-                styles.input,
-                { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
-              ]}
-            />
-            <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Starting balance (PHP)</Text>
-            <TextInput
-              value={newBal}
-              onChangeText={(t) => setNewBal(formatCurrencyAsTyped(t))}
-              placeholder="0.00"
-              keyboardType="numeric"
-              placeholderTextColor={colors.textMuted}
-              style={[
-                styles.input,
-                { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
-              ]}
-            />
-            <PrimaryButton
-              title="Create"
-              loading={busy}
-              onPress={async () => {
-                const name = newName.trim();
-                const bal = parseCurrencyInput(newBal);
-                if (!name) {
-                  await dialog.alert('Name required', 'Enter an account name.');
-                  return;
-                }
-                if (!Number.isFinite(bal) || bal < 0) {
-                  await dialog.alert('Balance', 'Enter a valid starting balance (0 or more).');
-                  return;
-                }
-                setBusy(true);
-                try {
-                  await createAccount({ name, balance: bal });
-                  setCreateOpen(false);
-                } finally {
-                  setBusy(false);
-                }
-              }}
-              style={{ marginTop: 12 }}
-            />
-            <PrimaryButton title="Cancel" variant="outline" onPress={() => setCreateOpen(false)} style={{ marginTop: 8 }} />
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 8 : 0}>
+          <Pressable style={[styles.backdrop, { flex: 1 }]} onPress={() => setCreateOpen(false)}>
+            <Pressable
+              style={[styles.sheet, { backgroundColor: colors.surface, borderColor: colors.border }]}
+              onPress={(e) => e.stopPropagation()}>
+              <Text style={[styles.sheetTitle, { color: colors.text }]}>Create account</Text>
+              <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Name</Text>
+              <TextInput
+                value={newName}
+                onChangeText={setNewName}
+                placeholder="e.g. BPI Savings"
+                placeholderTextColor={colors.textMuted}
+                style={[
+                  styles.input,
+                  { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
+                ]}
+              />
+              <Text style={[styles.fieldLabel, { color: colors.textMuted }]}>Starting balance (PHP)</Text>
+              <TextInput
+                value={newBal}
+                onChangeText={(t) => setNewBal(formatCurrencyAsTyped(t))}
+                placeholder="0.00"
+                keyboardType="numeric"
+                placeholderTextColor={colors.textMuted}
+                style={[
+                  styles.input,
+                  { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
+                ]}
+              />
+              <PrimaryButton
+                title="Create"
+                loading={busy}
+                onPress={async () => {
+                  const name = newName.trim();
+                  const bal = parseCurrencyInput(newBal);
+                  if (!name) {
+                    await dialog.alert('Name required', 'Enter an account name.');
+                    return;
+                  }
+                  if (!Number.isFinite(bal) || bal < 0) {
+                    await dialog.alert('Balance', 'Enter a valid starting balance (0 or more).');
+                    return;
+                  }
+                  setBusy(true);
+                  try {
+                    await createAccount({ name, balance: bal });
+                    setCreateOpen(false);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+                style={{ marginTop: 12 }}
+              />
+              <PrimaryButton title="Cancel" variant="outline" onPress={() => setCreateOpen(false)} style={{ marginTop: 8 }} />
+            </Pressable>
           </Pressable>
-        </Pressable>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Account detail modal */}
