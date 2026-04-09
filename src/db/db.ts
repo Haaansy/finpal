@@ -15,11 +15,22 @@ import {
   budgetRatesFromAllocationInputs,
   parseAllocationInputsFromSettings,
 } from '@/utils/budgetRates';
-import { computeBalancesFromTransactions } from '@/utils/calculations';
+import {
+  computeBalancesFromTransactions,
+  computeFunds,
+  disposableBudgetFromFunds,
+  getBudgetPeriodRange,
+  getPreviousBudgetPeriodRange,
+  sumHighPriorityExpensesForMonth,
+  sumIncomeForMonth,
+  sumLoanRepaymentsDueForRange,
+  sumLowPriorityExpensesForMonth,
+} from '@/utils/calculations';
 import { addCalendarMonthsToIsoDate } from '@/utils/dates';
 
 const DB_NAME = 'finpal.db';
 const SETTING_CARRYOVER_SAFE_TO_SPEND = 'carryover_safe_to_spend';
+const SETTING_CARRYOVER_POSTED_UNTIL_PERIOD_END = 'carryover_income_posted_until_period_end';
 const SETTING_LOAN_NOTIFY_ENABLED = 'loan_notify_enabled';
 const SETTING_LOAN_NOTIFY_DAYS_BEFORE = 'loan_notify_days_before';
 const SETTING_LOAN_NOTIFY_TIME = 'loan_notify_time';
@@ -98,6 +109,7 @@ async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
     ['budget_period_end_day', '0'],
     ['loan_tick_ym', monthKey(new Date())],
     [SETTING_CARRYOVER_SAFE_TO_SPEND, '0'],
+    [SETTING_CARRYOVER_POSTED_UNTIL_PERIOD_END, ''],
     [SETTING_LOAN_NOTIFY_ENABLED, '1'],
     [SETTING_LOAN_NOTIFY_DAYS_BEFORE, '3'],
     [SETTING_LOAN_NOTIFY_TIME, '09:00'],
@@ -144,6 +156,9 @@ async function ensureSchemaPatches(db: SQLite.SQLiteDatabase): Promise<void> {
     const ym = monthKey(new Date());
     await db.runAsync(`UPDATE loans SET repayment_acknowledged_ym = ? WHERE months_left > 0`, ym);
   }
+  if (!loanCols.some((c) => c.name === 'auto_debit')) {
+    await db.execAsync(`ALTER TABLE loans ADD COLUMN auto_debit INTEGER NOT NULL DEFAULT 0`);
+  }
 }
 
 function monthKey(d: Date): string {
@@ -173,12 +188,105 @@ export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
       const db = await SQLite.openDatabaseAsync(DB_NAME);
       await migrate(db);
       await ensureLoanMonthTick(db);
+      await ensureSafeToSpendCarryoverIncome(db);
       await recomputeSavingsBalancesWithDb(db);
       dbInstance = db;
       return db;
     })();
   }
   return initPromise;
+}
+
+function isoDayFromDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+async function ensureSafeToSpendCarryoverIncome(db: SQLite.SQLiteDatabase): Promise<void> {
+  const carry = await db.getFirstAsync<{ value: string }>(
+    `SELECT value FROM settings WHERE key = ?`,
+    SETTING_CARRYOVER_SAFE_TO_SPEND
+  );
+  const enabled = (carry?.value ?? '0') !== '0';
+  if (!enabled) return;
+
+  const pe = await db.getFirstAsync<{ value: string }>(
+    `SELECT value FROM settings WHERE key = 'budget_period_end_day'`
+  );
+  const budgetPeriodEndDay = clampBudgetPeriodEndDay(Number(pe?.value ?? 0));
+
+  const now = new Date();
+  const currentRange = getBudgetPeriodRange(budgetPeriodEndDay, now);
+  const prevRange = getPreviousBudgetPeriodRange(budgetPeriodEndDay, now);
+
+  const posted = await db.getFirstAsync<{ value: string }>(
+    `SELECT value FROM settings WHERE key = ?`,
+    SETTING_CARRYOVER_POSTED_UNTIL_PERIOD_END
+  );
+  const postedUntil = posted?.value?.trim() ?? '';
+  if (postedUntil && postedUntil >= prevRange.end) {
+    return;
+  }
+
+  const txs = await db.getAllAsync<TransactionRow>(
+    `SELECT id, amount, description, type, priority, category, date, due_date, is_paid, emergency_alloc, travel_alloc, standard_alloc, disposable_alloc
+     FROM transactions`
+  );
+  const loans = await db.getAllAsync<LoanRow>(
+    `SELECT id, name, total_amount, monthly_repayment, months_left, repayment_date, is_recurring, repayment_acknowledged_ym
+     FROM loans`
+  );
+  const rates = await loadBudgetRatesFromDb(db);
+
+  const incomePrev = sumIncomeForMonth(txs, prevRange);
+  const highBillsPrev = sumHighPriorityExpensesForMonth(txs, prevRange);
+  const loanPrev = sumLoanRepaymentsDueForRange(loans, prevRange);
+  const highPrev = highBillsPrev + loanPrev;
+  const fundsPrev = computeFunds(incomePrev, highPrev);
+  const disposablePrev = disposableBudgetFromFunds(fundsPrev, rates);
+  const lowPrev = sumLowPriorityExpensesForMonth(txs, prevRange);
+  const remainder = disposablePrev - lowPrev;
+
+  // Mark this period as processed even when remainder <= 0, to avoid repeated checks.
+  if (!(remainder > 0)) {
+    await db.runAsync(
+      `INSERT INTO settings (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      SETTING_CARRYOVER_POSTED_UNTIL_PERIOD_END,
+      prevRange.end
+    );
+    return;
+  }
+
+  const carryDate = currentRange.start;
+  const amount = Math.round(remainder * 100) / 100;
+  const description = `Carryover: unspent safe-to-spend from period ending ${prevRange.end}`;
+
+  const existing = await db.getFirstAsync<{ id: number }>(
+    `SELECT id FROM transactions
+     WHERE type = 'income'
+       AND category = 'Carryover'
+       AND date = ?
+       AND COALESCE(description, '') = ?
+     LIMIT 1`,
+    carryDate,
+    description
+  );
+  if (!existing?.id) {
+    await db.runAsync(
+      `INSERT INTO transactions (amount, description, type, priority, category, date, emergency_alloc, travel_alloc, standard_alloc, disposable_alloc)
+       VALUES (?, ?, 'income', NULL, 'Carryover', ?, NULL, NULL, NULL, NULL)`,
+      amount,
+      description,
+      carryDate
+    );
+  }
+
+  await db.runAsync(
+    `INSERT INTO settings (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    SETTING_CARRYOVER_POSTED_UNTIL_PERIOD_END,
+    prevRange.end
+  );
 }
 
 export async function resetDatabaseCache(): Promise<void> {

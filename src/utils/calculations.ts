@@ -2,6 +2,7 @@ import type { LoanRow, SavingsBalances, TransactionRow } from '@/db/types';
 import type { BudgetRates } from '@/utils/budgetRates';
 import { DEFAULT_BUDGET_RATES, savingsOfFundsRate } from '@/utils/budgetRates';
 import { yearMonthFromIsoDate } from '@/utils/dates';
+import { projectedLoanRepaymentIsos } from '@/utils/loanSchedule';
 
 export interface MonthRange {
   start: string;
@@ -336,6 +337,25 @@ export function totalMonthlyLoanRepayments(loans: LoanRow[]): number {
 /** Sum of `monthly_repayment` for every loan (aligned with Remaining Funds, safe-to-spend, savings recompute). */
 export function totalMonthlyLoanRepaymentsAll(loans: LoanRow[]): number {
   return loans.reduce((s, l) => s + Math.max(0, l.monthly_repayment || 0), 0);
+}
+
+/**
+ * Sum of loan repayments that fall inside the given range, based on each loan’s scheduled repayment dates.
+ * This is used for period-specific views (Home / Past Overview / future overview), so a loan due next month
+ * won’t reduce this month’s period.
+ */
+export function sumLoanRepaymentsDueForRange(loans: LoanRow[], range: MonthRange): number {
+  let total = 0;
+  for (const loan of loans) {
+    if (loan.months_left <= 0) continue;
+    const amount = Math.max(0, loan.monthly_repayment || 0);
+    if (amount <= 0) continue;
+    const dueIsos = projectedLoanRepaymentIsos(loan);
+    if (dueIsos.length === 0) continue;
+    const countInRange = dueIsos.reduce((c, iso) => (isDateInRange(iso, range) ? c + 1 : c), 0);
+    if (countInRange > 0) total += amount * countInRange;
+  }
+  return total;
 }
 
 /**

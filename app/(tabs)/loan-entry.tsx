@@ -19,12 +19,17 @@ export default function LoanEntryScreen() {
   const insets = useSafeAreaInsets();
   const { colors } = useFinpalTheme();
   const dialog = useFinpalDialog();
-  const { addLoanRow, updateLoanRow, loans, ready } = useBudget();
+  const { addIncome, addLoanRow, updateLoanRow, loans, ready } = useBudget();
   const params = useLocalSearchParams<{ editId?: string | string[] }>();
   const editIdRaw = params.editId;
   const editIdStr = Array.isArray(editIdRaw) ? editIdRaw[0] : editIdRaw;
   const editingId = editIdStr ? Number(editIdStr) : NaN;
   const isEditing = Number.isFinite(editingId) && editingId > 0;
+
+  const todayIso = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
 
   const [name, setName] = useState('');
   const [total, setTotal] = useState('');
@@ -32,6 +37,7 @@ export default function LoanEntryScreen() {
   const [monthsLeft, setMonthsLeft] = useState('');
   const [repaymentDate, setRepaymentDate] = useState('');
   const [isRecurring, setIsRecurring] = useState(true);
+  const [recordProceedsIncome, setRecordProceedsIncome] = useState(true);
   const [loading, setLoading] = useState(false);
   const [dateFieldKey, setDateFieldKey] = useState(0);
   const [postSaveVisible, setPostSaveVisible] = useState(false);
@@ -44,6 +50,7 @@ export default function LoanEntryScreen() {
     setMonthsLeft('');
     setRepaymentDate('');
     setIsRecurring(true);
+    setRecordProceedsIncome(true);
     setDateFieldKey((k) => k + 1);
   };
 
@@ -111,6 +118,14 @@ export default function LoanEntryScreen() {
         await updateLoanRow(editingId, payload);
         router.back();
         return;
+      }
+      if (recordProceedsIncome) {
+        await addIncome({
+          amount: t,
+          date: todayIso(),
+          category: 'Loans',
+          description: `Loan proceeds: ${name.trim()}`,
+        });
       }
       await addLoanRow(payload);
       resetForm();
@@ -222,6 +237,23 @@ export default function LoanEntryScreen() {
         <Text style={[styles.hint, { color: colors.textMuted }]}>
           One-off loans always use 1 payment in the budget until you tick them paid on the checklist.
         </Text>
+      ) : null}
+
+      {!isEditing ? (
+        <View style={[styles.recRow, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+          <View style={{ flex: 1, marginRight: 12 }}>
+            <Text style={[styles.recTitle, { color: colors.text }]}>Record loan as income</Text>
+            <Text style={[styles.recHint, { color: colors.textMuted }]}>
+              Adds an income transaction for the loan proceeds when you save this loan.
+            </Text>
+          </View>
+          <Switch
+            value={recordProceedsIncome}
+            onValueChange={setRecordProceedsIncome}
+            trackColor={{ false: colors.border, true: `${colors.primary}88` }}
+            thumbColor={recordProceedsIncome ? colors.primary : colors.surfaceSecondary}
+          />
+        </View>
       ) : null}
 
       <PrimaryButton

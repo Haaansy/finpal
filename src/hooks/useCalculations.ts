@@ -6,8 +6,6 @@ import { useBudget } from '@/context/BudgetContext';
 import { formatIsoDateEnPh } from '@/utils/dates';
 import {
   computeFunds,
-  computeSafeToSpend,
-  computeSafeToSpendCarryover,
   describeBudgetPeriodRule,
   disposableBudgetFromFunds,
   filterTransactionsForMonth,
@@ -19,8 +17,7 @@ import {
   sumLowPriorityExpensesForMonth,
   sumPaidHighPriorityExpensesForMonth,
   sumUnpaidHighPriorityExpensesForMonth,
-  periodHighPriorityOutflow,
-  totalMonthlyLoanRepaymentsAll,
+  sumLoanRepaymentsDueForRange,
 } from '@/utils/calculations';
 
 export type CalculationsSnapshot = {
@@ -57,17 +54,16 @@ export function buildCalculationsSnapshot(
   const highPriBillsTotal = sumHighPriorityExpensesForMonth(transactions, range);
   const highPriExpensesMonth = sumPaidHighPriorityExpensesForMonth(transactions, range);
   const unpaidHighPriExpensesMonth = sumUnpaidHighPriorityExpensesForMonth(transactions, range);
-  const loanPay = totalMonthlyLoanRepaymentsAll(loans);
-  const highPriTotal = periodHighPriorityOutflow(transactions, loans, range);
+  const loanPay = sumLoanRepaymentsDueForRange(loans, range);
+  const highPriTotal = highPriBillsTotal + loanPay;
   const highPriMonth = highPriTotal;
   const lowPriMonth = sumLowPriorityExpensesForMonth(transactions, range);
   const funds = computeFunds(incomeMonth, highPriTotal);
   const savingsPool = savingsPoolFromFunds(funds, budgetRates);
   const disposableBudget = disposableBudgetFromFunds(funds, budgetRates);
   const bucketTargets = periodBucketTargetsFromFunds(funds, budgetRates);
-  const safeToSpend = opts?.carryoverSafeToSpend
-    ? computeSafeToSpendCarryover(transactions, loans, budgetPeriodEndDay, budgetRates, range.end)
-    : computeSafeToSpend(transactions, loans, range, budgetRates);
+  const safeToSpendRaw = disposableBudget - lowPriMonth;
+  const safeToSpend = safeToSpendRaw;
   const periodRuleText = describeBudgetPeriodRule(budgetPeriodEndDay);
   const periodEndFormatted = formatIsoDateEnPh(range.end);
   const periodRangeFormatted = `${formatIsoDateEnPh(range.start)} – ${periodEndFormatted}`;

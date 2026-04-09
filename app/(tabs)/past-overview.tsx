@@ -21,6 +21,8 @@ import { useFinpalTheme } from "@/context/FinpalThemeContext";
 import { buildCalculationsSnapshot } from "@/hooks/useCalculations";
 import { useDueDatesOverview } from "@/hooks/useDueDatesOverview";
 import {
+  computeFunds,
+  disposableBudgetFromFunds,
   getBudgetPeriodRange,
   getPreviousBudgetPeriodRange,
 } from "@/utils/calculations";
@@ -28,10 +30,11 @@ import { formatPhp } from "@/utils/currency";
 import { formatYearMonthHeading, parseIsoToDate } from "@/utils/dates";
 
 const MIN_YEAR = 2000;
+const FUTURE_MONTHS_AHEAD = 24;
 
 function maxCalendarMonthTotal(): number {
   const now = new Date();
-  return now.getFullYear() * 12 + now.getMonth();
+  return now.getFullYear() * 12 + now.getMonth() + FUTURE_MONTHS_AHEAD;
 }
 
 function clampCalendarMonthTotal(total: number): { y: number; m: number } {
@@ -102,6 +105,24 @@ export default function PastOverviewScreen() {
     () => getBudgetPeriodRange(settings.budgetPeriodEndDay, new Date()),
     [settings.budgetPeriodEndDay],
   );
+  const currentMetrics = useMemo(() => {
+    if (!ready) return null;
+    return buildCalculationsSnapshot(
+      transactions,
+      loans,
+      settings.budgetPeriodEndDay,
+      settings.budgetRates,
+      new Date(),
+      { carryoverSafeToSpend: settings.carryoverSafeToSpend },
+    );
+  }, [
+    ready,
+    transactions,
+    loans,
+    settings.budgetPeriodEndDay,
+    settings.budgetRates,
+    settings.carryoverSafeToSpend,
+  ]);
   const isCurrentPeriod = metrics
     ? metrics.range.start === currentRange.start &&
       metrics.range.end === currentRange.end
@@ -122,7 +143,31 @@ export default function PastOverviewScreen() {
     );
   }
 
-  const s = metrics;
+  let s = metrics;
+  let projectedCarryoverIncome = 0;
+  if (
+    settings.carryoverSafeToSpend &&
+    currentMetrics &&
+    metrics.range.start > currentRange.start
+  ) {
+    // If the user is previewing a future period, show a projection for the immediate next period:
+    // carry over whatever is currently unspent safe-to-spend in the current period.
+    const end = parseIsoToDate(currentRange.end);
+    if (end) {
+      const dayAfterEnd = new Date(end.getFullYear(), end.getMonth(), end.getDate() + 1);
+      const nextRange = getBudgetPeriodRange(settings.budgetPeriodEndDay, dayAfterEnd);
+      if (metrics.range.start === nextRange.start && metrics.range.end === nextRange.end) {
+        projectedCarryoverIncome = Math.max(0, currentMetrics.safeToSpend);
+        if (projectedCarryoverIncome > 0) {
+          const incomeMonth = s.incomeMonth + projectedCarryoverIncome;
+          const funds = computeFunds(incomeMonth, s.highPriMonth);
+          const disposableBudget = disposableBudgetFromFunds(funds, settings.budgetRates);
+          const safeToSpend = disposableBudget - s.lowPriMonth;
+          s = { ...s, incomeMonth, funds, disposableBudget, safeToSpend };
+        }
+      }
+    }
+  }
   const monthLabel = formatYearMonthHeading(
     `${selYM.y}-${String(selYM.m + 1).padStart(2, "0")}`,
   );
@@ -148,11 +193,10 @@ export default function PastOverviewScreen() {
       </Pressable>
 
       <Text style={[styles.heading, { color: colors.text }]}>
-        Past overview
+        Period overview
       </Text>
       <Text style={[styles.tagline, { color: colors.textMuted }]}>
-        Same layout as Home for the period containing {monthLabel}. Loan totals
-        use current loan entries.
+        Same layout as Home for the period containing {monthLabel}.
       </Text>
 
       <Text style={[styles.selectorLabel, { color: colors.textMuted }]}>
@@ -327,6 +371,11 @@ export default function PastOverviewScreen() {
           <Text style={[styles.overviewMeta, { color: colors.textMuted }]}>
             Settled income in the selected period
           </Text>
+          {projectedCarryoverIncome > 0 ? (
+            <Text style={[styles.overviewDetail, { color: colors.textMuted }]}>
+              Includes projected carryover: {formatPhp(projectedCarryoverIncome)}
+            </Text>
+          ) : null}
         </View>
 
         <View
