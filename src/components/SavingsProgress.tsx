@@ -44,7 +44,6 @@ export function SavingsProgress({ periodFrom }: { periodFrom?: PeriodPick }) {
         <SavingsAmountCard label="Future" amount={savings.standard} accent="#9C27B0" />
         <SavingsAmountCard label="Emergency" amount={savings.emergency} accent="#E91E63" />
         <SavingsAmountCard label="Travel" amount={savings.travel} accent="#AB47BC" />
-        <SavingsAmountCard label="Disposable pool" amount={savings.disposable} accent={colors.primary} />
       </View>
       <Text style={[styles.rangeNote, { color: colors.textMuted }]}>Period: {periodRangeFormatted}</Text>
       <Text style={[styles.rangeNote, { color: colors.textMuted, marginTop: 2 }]}>{periodRuleText}</Text>

@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 
-import type { LoanRow, TransactionRow } from '@/db/types';
+import type { LoanRow, SafeToSpendMoveRow, TransactionRow } from '@/db/types';
 import type { BudgetRates } from '@/utils/budgetRates';
 import { useBudget } from '@/context/BudgetContext';
 import { formatIsoDateEnPh } from '@/utils/dates';
@@ -18,6 +18,7 @@ import {
   sumPaidHighPriorityExpensesForMonth,
   sumUnpaidHighPriorityExpensesForMonth,
   sumLoanRepaymentsDueForRange,
+  sumSafeToSpendMovesForMonth,
 } from '@/utils/calculations';
 
 export type CalculationsSnapshot = {
@@ -43,6 +44,7 @@ export type CalculationsSnapshot = {
 export function buildCalculationsSnapshot(
   transactions: TransactionRow[],
   loans: LoanRow[],
+  safeToSpendMoves: SafeToSpendMoveRow[],
   budgetPeriodEndDay: number,
   budgetRates: BudgetRates,
   anchorDate: Date,
@@ -62,8 +64,9 @@ export function buildCalculationsSnapshot(
   const savingsPool = savingsPoolFromFunds(funds, budgetRates);
   const disposableBudget = disposableBudgetFromFunds(funds, budgetRates);
   const bucketTargets = periodBucketTargetsFromFunds(funds, budgetRates);
+  const moveNet = sumSafeToSpendMovesForMonth(safeToSpendMoves, range);
   const safeToSpendRaw = disposableBudget - lowPriMonth;
-  const safeToSpend = safeToSpendRaw;
+  const safeToSpend = safeToSpendRaw + moveNet;
   const periodRuleText = describeBudgetPeriodRule(budgetPeriodEndDay);
   const periodEndFormatted = formatIsoDateEnPh(range.end);
   const periodRangeFormatted = `${formatIsoDateEnPh(range.start)} – ${periodEndFormatted}`;
@@ -90,17 +93,26 @@ export function buildCalculationsSnapshot(
 }
 
 export function useCalculations() {
-  const { transactions, settings, loans, ready } = useBudget();
+  const { transactions, settings, loans, ready, safeToSpendMoves } = useBudget();
 
   return useMemo(() => {
     const snapshot = buildCalculationsSnapshot(
       transactions,
       loans,
+      safeToSpendMoves,
       settings.budgetPeriodEndDay,
       settings.budgetRates,
       new Date(),
       { carryoverSafeToSpend: settings.carryoverSafeToSpend }
     );
     return { ready, ...snapshot };
-  }, [transactions, settings.budgetPeriodEndDay, settings.budgetRates, settings.carryoverSafeToSpend, loans, ready]);
+  }, [
+    transactions,
+    loans,
+    safeToSpendMoves,
+    settings.budgetPeriodEndDay,
+    settings.budgetRates,
+    settings.carryoverSafeToSpend,
+    ready,
+  ]);
 }

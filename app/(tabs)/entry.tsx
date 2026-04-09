@@ -117,6 +117,8 @@ export default function EntryScreen() {
           due_date: mode === 'expense' && awaitingPayment ? date : null,
           is_paid: mode === 'expense' && awaitingPayment ? 0 : 1,
         });
+        resetForm();
+        hydratedRef.current = null;
         router.back();
         return;
       }

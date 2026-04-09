@@ -149,6 +149,50 @@ export default function DashboardScreen() {
             </Text>
           </Pressable>
         </Link>
+        <Link href="/savings" asChild>
+          <Pressable
+            style={StyleSheet.flatten([
+              styles.quickChip,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+            ])}
+            accessibilityRole="button"
+            accessibilityLabel="Open savings"
+          >
+            <View
+              style={[
+                styles.quickChipIcon,
+                { backgroundColor: colors.surfaceSecondary },
+              ]}
+            >
+              <FontAwesome name="pie-chart" size={18} color={colors.primary} />
+            </View>
+            <Text style={[styles.quickChipText, { color: colors.text }]}>
+              Savings
+            </Text>
+          </Pressable>
+        </Link>
+        <Link href="/accounts" asChild>
+          <Pressable
+            style={StyleSheet.flatten([
+              styles.quickChip,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+            ])}
+            accessibilityRole="button"
+            accessibilityLabel="Open accounts"
+          >
+            <View
+              style={[
+                styles.quickChipIcon,
+                { backgroundColor: colors.surfaceSecondary },
+              ]}
+            >
+              <FontAwesome name="bank" size={18} color={colors.primary} />
+            </View>
+            <Text style={[styles.quickChipText, { color: colors.text }]}>
+              Accounts
+            </Text>
+          </Pressable>
+        </Link>
       </ScrollView>
 
       <Text style={[styles.sectionTitle, { color: colors.text }]}>

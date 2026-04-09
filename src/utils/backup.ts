@@ -1,8 +1,11 @@
 import type { BackupPayload } from '@/db/types';
 import {
+  getAccounts,
   getAllSettingsRows,
   getLoans,
+  getSafeToSpendMoves,
   getSavingsBalances,
+  getSavingsBubbles,
   getTransactions,
   replaceAllData,
 } from '@/db/db';
@@ -10,11 +13,15 @@ import {
 const BACKUP_VERSION = 1;
 
 export async function buildBackupJson(): Promise<string> {
-  const [settings, transactions, loans, savings_balances] = await Promise.all([
+  const [settings, transactions, loans, savings_balances, savings_bubbles, accounts, safe_to_spend_moves] =
+    await Promise.all([
     getAllSettingsRows(),
     getTransactions(),
     getLoans(),
     getSavingsBalances(),
+    getSavingsBubbles(),
+    getAccounts(),
+    getSafeToSpendMoves(),
   ]);
 
   const payload: BackupPayload = {
@@ -24,6 +31,9 @@ export async function buildBackupJson(): Promise<string> {
     transactions: transactions.map(({ id: _id, ...rest }) => rest),
     loans: loans.map(({ id: _id, ...rest }) => rest),
     savings_balances,
+    savings_bubbles,
+    accounts,
+    safe_to_spend_moves: safe_to_spend_moves.map(({ id: _id, ...rest }) => rest),
   };
 
   return JSON.stringify(payload, null, 2);
@@ -73,11 +83,40 @@ export async function applyBackupJson(raw: string): Promise<void> {
           ? String(l.repayment_acknowledged_ym)
           : null,
     })),
+    savings_bubbles: (data.savings_bubbles ?? []).map((b) => ({
+      id: Number(b.id),
+      name: String(b.name),
+      target_amount: Math.max(0, Number(b.target_amount ?? 0)),
+      current_amount: Math.max(0, Number(b.current_amount ?? 0)),
+      target_date: b.target_date != null && String(b.target_date).trim() !== '' ? String(b.target_date) : null,
+      remind_enabled: b.remind_enabled != null && Number(b.remind_enabled) === 0 ? 0 : 1,
+      remind_time: b.remind_time != null && String(b.remind_time).trim() !== '' ? String(b.remind_time) : null,
+      created_at: String(b.created_at ?? new Date().toISOString()),
+    })),
+    accounts: (data.accounts ?? []).map((a) => ({
+      id: Number(a.id),
+      name: String(a.name),
+      balance: Math.max(0, Number(a.balance ?? 0)),
+      linked_bubble_id:
+        a.linked_bubble_id != null && Number.isFinite(Number(a.linked_bubble_id))
+          ? Number(a.linked_bubble_id)
+          : null,
+      linked_bucket: a.linked_bucket != null && String(a.linked_bucket).trim() !== '' ? String(a.linked_bucket) : null,
+      updated_at: String(a.updated_at ?? new Date().toISOString()),
+    })),
     savings_balances: {
       emergency: Number(data.savings_balances?.emergency ?? 0),
       travel: Number(data.savings_balances?.travel ?? 0),
       standard: Number(data.savings_balances?.standard ?? 0),
       disposable: Number(data.savings_balances?.disposable ?? 0),
     },
+    safe_to_spend_moves: (data.safe_to_spend_moves ?? []).map((m) => ({
+      amount: Number(m.amount),
+      date: String(m.date),
+      bubble_id:
+        m.bubble_id != null && Number.isFinite(Number(m.bubble_id)) ? Number(m.bubble_id) : null,
+      kind: m.kind === 'withdraw' ? 'withdraw' : 'deposit',
+      created_at: String(m.created_at ?? new Date().toISOString()),
+    })),
   });
 }

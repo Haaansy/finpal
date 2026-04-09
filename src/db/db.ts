@@ -5,6 +5,7 @@ import type {
   BudgetAllocationInputs,
   ExpensePriority,
   LoanRow,
+  SafeToSpendMoveRow,
   SavingsBalances,
   ThemePreference,
   TransactionRow,
@@ -18,22 +19,20 @@ import {
 import {
   computeBalancesFromTransactions,
   computeFunds,
-  disposableBudgetFromFunds,
   getBudgetPeriodRange,
-  getPreviousBudgetPeriodRange,
+  periodBucketTargetsFromFunds,
   sumHighPriorityExpensesForMonth,
   sumIncomeForMonth,
-  sumLoanRepaymentsDueForRange,
-  sumLowPriorityExpensesForMonth,
 } from '@/utils/calculations';
 import { addCalendarMonthsToIsoDate } from '@/utils/dates';
 
 const DB_NAME = 'finpal.db';
 const SETTING_CARRYOVER_SAFE_TO_SPEND = 'carryover_safe_to_spend';
-const SETTING_CARRYOVER_POSTED_UNTIL_PERIOD_END = 'carryover_income_posted_until_period_end';
 const SETTING_LOAN_NOTIFY_ENABLED = 'loan_notify_enabled';
 const SETTING_LOAN_NOTIFY_DAYS_BEFORE = 'loan_notify_days_before';
 const SETTING_LOAN_NOTIFY_TIME = 'loan_notify_time';
+const SETTING_ONBOARDING_DONE = 'onboarding_done';
+const SETTING_NOTIFICATIONS_ENABLED = 'notifications_enabled';
 
 let dbInstance: SQLite.SQLiteDatabase | null = null;
 let initPromise: Promise<SQLite.SQLiteDatabase> | null = null;
@@ -90,6 +89,35 @@ async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
       monthly_repayment REAL NOT NULL,
       months_left INTEGER NOT NULL CHECK (months_left >= 0)
     );
+
+    CREATE TABLE IF NOT EXISTS savings_bubbles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      target_amount REAL NOT NULL DEFAULT 0,
+      current_amount REAL NOT NULL DEFAULT 0,
+      target_date TEXT,
+      remind_enabled INTEGER NOT NULL DEFAULT 1,
+      remind_time TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS accounts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      balance REAL NOT NULL DEFAULT 0,
+      linked_bubble_id INTEGER,
+      linked_bucket TEXT,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS safe_to_spend_moves (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      amount REAL NOT NULL,
+      date TEXT NOT NULL,
+      bubble_id INTEGER,
+      kind TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
   `);
 
   const rows = await db.getAllAsync<{ c: number }>(
@@ -106,10 +134,11 @@ async function migrate(db: SQLite.SQLiteDatabase): Promise<void> {
     ['travel_pct', '10'],
     ['standard_pct', '10'],
     ['theme_preference', 'system'],
+    [SETTING_ONBOARDING_DONE, '0'],
+    [SETTING_NOTIFICATIONS_ENABLED, '1'],
     ['budget_period_end_day', '0'],
     ['loan_tick_ym', monthKey(new Date())],
     [SETTING_CARRYOVER_SAFE_TO_SPEND, '0'],
-    [SETTING_CARRYOVER_POSTED_UNTIL_PERIOD_END, ''],
     [SETTING_LOAN_NOTIFY_ENABLED, '1'],
     [SETTING_LOAN_NOTIFY_DAYS_BEFORE, '3'],
     [SETTING_LOAN_NOTIFY_TIME, '09:00'],
@@ -156,8 +185,52 @@ async function ensureSchemaPatches(db: SQLite.SQLiteDatabase): Promise<void> {
     const ym = monthKey(new Date());
     await db.runAsync(`UPDATE loans SET repayment_acknowledged_ym = ? WHERE months_left > 0`, ym);
   }
-  if (!loanCols.some((c) => c.name === 'auto_debit')) {
-    await db.execAsync(`ALTER TABLE loans ADD COLUMN auto_debit INTEGER NOT NULL DEFAULT 0`);
+
+  // Ensure tables exist (older installs).
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS savings_bubbles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      target_amount REAL NOT NULL DEFAULT 0,
+      current_amount REAL NOT NULL DEFAULT 0,
+      target_date TEXT,
+      remind_enabled INTEGER NOT NULL DEFAULT 1,
+      remind_time TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS accounts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      balance REAL NOT NULL DEFAULT 0,
+      linked_bubble_id INTEGER,
+      linked_bucket TEXT,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS safe_to_spend_moves (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      amount REAL NOT NULL,
+      date TEXT NOT NULL,
+      bubble_id INTEGER,
+      kind TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
+
+  const accountCols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(accounts)`);
+  if (!accountCols.some((c) => c.name === 'linked_bucket')) {
+    await db.execAsync(`ALTER TABLE accounts ADD COLUMN linked_bucket TEXT`);
+  }
+
+  const bubbleCols = await db.getAllAsync<{ name: string }>(`PRAGMA table_info(savings_bubbles)`);
+  if (!bubbleCols.some((c) => c.name === 'target_date')) {
+    await db.execAsync(`ALTER TABLE savings_bubbles ADD COLUMN target_date TEXT`);
+  }
+  if (!bubbleCols.some((c) => c.name === 'remind_enabled')) {
+    await db.execAsync(`ALTER TABLE savings_bubbles ADD COLUMN remind_enabled INTEGER NOT NULL DEFAULT 1`);
+  }
+  if (!bubbleCols.some((c) => c.name === 'remind_time')) {
+    await db.execAsync(`ALTER TABLE savings_bubbles ADD COLUMN remind_time TEXT`);
   }
 }
 
@@ -188,7 +261,7 @@ export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
       const db = await SQLite.openDatabaseAsync(DB_NAME);
       await migrate(db);
       await ensureLoanMonthTick(db);
-      await ensureSafeToSpendCarryoverIncome(db);
+      await ensureSavingsDepositDueRows(db);
       await recomputeSavingsBalancesWithDb(db);
       dbInstance = db;
       return db;
@@ -197,96 +270,57 @@ export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   return initPromise;
 }
 
-function isoDayFromDate(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-async function ensureSafeToSpendCarryoverIncome(db: SQLite.SQLiteDatabase): Promise<void> {
-  const carry = await db.getFirstAsync<{ value: string }>(
-    `SELECT value FROM settings WHERE key = ?`,
-    SETTING_CARRYOVER_SAFE_TO_SPEND
-  );
-  const enabled = (carry?.value ?? '0') !== '0';
-  if (!enabled) return;
-
+async function ensureSavingsDepositDueRows(db: SQLite.SQLiteDatabase): Promise<void> {
   const pe = await db.getFirstAsync<{ value: string }>(
     `SELECT value FROM settings WHERE key = 'budget_period_end_day'`
   );
   const budgetPeriodEndDay = clampBudgetPeriodEndDay(Number(pe?.value ?? 0));
+  const rates = await loadBudgetRatesFromDb(db);
 
   const now = new Date();
-  const currentRange = getBudgetPeriodRange(budgetPeriodEndDay, now);
-  const prevRange = getPreviousBudgetPeriodRange(budgetPeriodEndDay, now);
-
-  const posted = await db.getFirstAsync<{ value: string }>(
-    `SELECT value FROM settings WHERE key = ?`,
-    SETTING_CARRYOVER_POSTED_UNTIL_PERIOD_END
-  );
-  const postedUntil = posted?.value?.trim() ?? '';
-  if (postedUntil && postedUntil >= prevRange.end) {
-    return;
-  }
+  const range = getBudgetPeriodRange(budgetPeriodEndDay, now);
+  const dueDate = range.end;
 
   const txs = await db.getAllAsync<TransactionRow>(
     `SELECT id, amount, description, type, priority, category, date, due_date, is_paid, emergency_alloc, travel_alloc, standard_alloc, disposable_alloc
      FROM transactions`
   );
-  const loans = await db.getAllAsync<LoanRow>(
-    `SELECT id, name, total_amount, monthly_repayment, months_left, repayment_date, is_recurring, repayment_acknowledged_ym
-     FROM loans`
-  );
-  const rates = await loadBudgetRatesFromDb(db);
 
-  const incomePrev = sumIncomeForMonth(txs, prevRange);
-  const highBillsPrev = sumHighPriorityExpensesForMonth(txs, prevRange);
-  const loanPrev = sumLoanRepaymentsDueForRange(loans, prevRange);
-  const highPrev = highBillsPrev + loanPrev;
-  const fundsPrev = computeFunds(incomePrev, highPrev);
-  const disposablePrev = disposableBudgetFromFunds(fundsPrev, rates);
-  const lowPrev = sumLowPriorityExpensesForMonth(txs, prevRange);
-  const remainder = disposablePrev - lowPrev;
+  const income = sumIncomeForMonth(txs, range);
+  const highPriBills = sumHighPriorityExpensesForMonth(txs, range);
+  const funds = computeFunds(income, highPriBills);
+  const targets = periodBucketTargetsFromFunds(funds, rates);
 
-  // Mark this period as processed even when remainder <= 0, to avoid repeated checks.
-  if (!(remainder > 0)) {
-    await db.runAsync(
-      `INSERT INTO settings (key, value) VALUES (?, ?)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-      SETTING_CARRYOVER_POSTED_UNTIL_PERIOD_END,
-      prevRange.end
+  const rows: { desc: string; amt: number }[] = [
+    { desc: 'Deposit to Future savings', amt: targets.future },
+    { desc: 'Deposit to Emergency fund', amt: targets.emergency },
+    { desc: 'Deposit to Travel fund', amt: targets.travel },
+  ].map((r) => ({ ...r, amt: Math.round(Math.max(0, r.amt) * 100) / 100 }));
+
+  for (const r of rows) {
+    if (!(r.amt > 0)) continue;
+    const existing = await db.getFirstAsync<{ id: number }>(
+      `SELECT id FROM transactions
+       WHERE type = 'expense'
+         AND priority = 'low'
+         AND category = 'Savings deposit'
+         AND due_date = ?
+         AND is_paid = 0
+         AND COALESCE(description,'') = ?
+       LIMIT 1`,
+      dueDate,
+      r.desc
     );
-    return;
-  }
-
-  const carryDate = currentRange.start;
-  const amount = Math.round(remainder * 100) / 100;
-  const description = `Carryover: unspent safe-to-spend from period ending ${prevRange.end}`;
-
-  const existing = await db.getFirstAsync<{ id: number }>(
-    `SELECT id FROM transactions
-     WHERE type = 'income'
-       AND category = 'Carryover'
-       AND date = ?
-       AND COALESCE(description, '') = ?
-     LIMIT 1`,
-    carryDate,
-    description
-  );
-  if (!existing?.id) {
+    if (existing?.id) continue;
     await db.runAsync(
-      `INSERT INTO transactions (amount, description, type, priority, category, date, emergency_alloc, travel_alloc, standard_alloc, disposable_alloc)
-       VALUES (?, ?, 'income', NULL, 'Carryover', ?, NULL, NULL, NULL, NULL)`,
-      amount,
-      description,
-      carryDate
+      `INSERT INTO transactions (amount, description, type, priority, category, date, due_date, is_paid, emergency_alloc, travel_alloc, standard_alloc, disposable_alloc)
+       VALUES (?, ?, 'expense', 'low', 'Savings deposit', ?, ?, 0, NULL, NULL, NULL, NULL)`,
+      r.amt,
+      r.desc,
+      dueDate,
+      dueDate
     );
   }
-
-  await db.runAsync(
-    `INSERT INTO settings (key, value) VALUES (?, ?)
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-    SETTING_CARRYOVER_POSTED_UNTIL_PERIOD_END,
-    prevRange.end
-  );
 }
 
 export async function resetDatabaseCache(): Promise<void> {
@@ -370,6 +404,8 @@ export async function getAppSettings(): Promise<AppSettings> {
     const db = await getDatabase();
     const keys = [
       'theme_preference',
+      SETTING_ONBOARDING_DONE,
+      SETTING_NOTIFICATIONS_ENABLED,
       'budget_period_end_day',
       SETTING_CARRYOVER_SAFE_TO_SPEND,
       SETTING_LOAN_NOTIFY_ENABLED,
@@ -396,6 +432,8 @@ export async function getAppSettings(): Promise<AppSettings> {
     });
     return {
       themePreference: (map.theme_preference as ThemePreference) || 'system',
+      onboardingDone: Number(map[SETTING_ONBOARDING_DONE] ?? 0) !== 0,
+      notificationsEnabled: Number(map[SETTING_NOTIFICATIONS_ENABLED] ?? 1) !== 0,
       budgetPeriodEndDay: clampBudgetPeriodEndDay(Number(map.budget_period_end_day ?? 0)),
       carryoverSafeToSpend: Number(map[SETTING_CARRYOVER_SAFE_TO_SPEND] ?? 0) !== 0,
       loanNotifyEnabled: Number(map[SETTING_LOAN_NOTIFY_ENABLED] ?? 1) !== 0,
@@ -405,6 +443,10 @@ export async function getAppSettings(): Promise<AppSettings> {
       budgetAllocationRaw: raw,
     };
   });
+}
+
+export async function updateNotificationsEnabled(enabled: boolean): Promise<void> {
+  await setSetting(SETTING_NOTIFICATIONS_ENABLED, enabled ? '1' : '0');
 }
 
 export async function updateCarryoverSafeToSpend(enabled: boolean): Promise<void> {
@@ -535,14 +577,44 @@ async function recomputeSavingsBalancesWithDb(db: SQLite.SQLiteDatabase): Promis
   const loanRows = await db.getAllAsync<LoanRow>(
     `SELECT id, name, total_amount, monthly_repayment, months_left, repayment_date, is_recurring, repayment_acknowledged_ym FROM loans`
   );
+  const carryRow = await db.getFirstAsync<{ value: string }>(
+    `SELECT value FROM settings WHERE key = ?`,
+    SETTING_CARRYOVER_SAFE_TO_SPEND
+  );
+  const sweep = (carryRow?.value ?? '0') !== '0';
   const rates = await loadBudgetRatesFromDb(db);
-  const b = computeBalancesFromTransactions(txs, budgetPeriodEndDay, loanRows, rates);
+  const b = computeBalancesFromTransactions(txs, budgetPeriodEndDay, loanRows, rates, {
+    sweepUnspentSafeToSpendToFuture: sweep,
+  });
   await db.runAsync(
     `UPDATE savings_balances SET emergency = ?, travel = ?, standard = ?, disposable = ? WHERE id = 1`,
     finiteBalance(b.emergency),
     finiteBalance(b.travel),
     finiteBalance(b.standard),
     finiteBalance(b.disposable)
+  );
+
+  // Mirror balances for accounts linked to system buckets.
+  const bal = await db.getFirstAsync<{ emergency: number; travel: number; standard: number }>(
+    `SELECT emergency, travel, standard FROM savings_balances WHERE id = 1`
+  );
+  const standard = Math.max(0, bal?.standard ?? 0);
+  const emergency = Math.max(0, bal?.emergency ?? 0);
+  const travel = Math.max(0, bal?.travel ?? 0);
+  await db.runAsync(
+    `UPDATE accounts SET balance = ?, updated_at = ? WHERE linked_bucket = 'future'`,
+    standard,
+    nowIso()
+  );
+  await db.runAsync(
+    `UPDATE accounts SET balance = ?, updated_at = ? WHERE linked_bucket = 'emergency'`,
+    emergency,
+    nowIso()
+  );
+  await db.runAsync(
+    `UPDATE accounts SET balance = ?, updated_at = ? WHERE linked_bucket = 'travel'`,
+    travel,
+    nowIso()
   );
 }
 
@@ -690,6 +762,359 @@ export async function getLoans(): Promise<LoanRow[]> {
   );
 }
 
+export interface SavingsBubbleRow {
+  id: number;
+  name: string;
+  target_amount: number;
+  current_amount: number;
+  target_date: string | null;
+  remind_enabled: number;
+  remind_time: string | null;
+  created_at: string;
+}
+
+export interface AccountRow {
+  id: number;
+  name: string;
+  balance: number;
+  linked_bubble_id: number | null;
+  linked_bucket: string | null;
+  updated_at: string;
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+export async function getSavingsBubbles(): Promise<SavingsBubbleRow[]> {
+  return runSerialized(() =>
+    getDatabase().then((db) =>
+      db.getAllAsync<SavingsBubbleRow>(
+        `SELECT id, name, target_amount, current_amount, target_date, remind_enabled, remind_time, created_at
+         FROM savings_bubbles ORDER BY created_at DESC`
+      )
+    )
+  );
+}
+
+export async function createSavingsBubble(input: {
+  name: string;
+  target_amount: number;
+  target_date?: string | null;
+  remind_enabled?: number;
+  remind_time?: string | null;
+}): Promise<void> {
+  return runSerialized(async () => {
+    const db = await getDatabase();
+    await db.runAsync(
+      `INSERT INTO savings_bubbles (name, target_amount, current_amount, target_date, remind_enabled, remind_time, created_at)
+       VALUES (?, ?, 0, ?, ?, ?, ?)`,
+      input.name,
+      Math.max(0, input.target_amount),
+      input.target_date ?? null,
+      input.remind_enabled != null && Number(input.remind_enabled) === 0 ? 0 : 1,
+      input.remind_time ?? null,
+      nowIso()
+    );
+  });
+}
+
+export async function updateSavingsBubble(
+  id: number,
+  input: {
+    name: string;
+    target_amount: number;
+    target_date?: string | null;
+    remind_enabled?: number;
+    remind_time?: string | null;
+  }
+): Promise<void> {
+  return runSerialized(async () => {
+    const db = await getDatabase();
+    await db.runAsync(
+      `UPDATE savings_bubbles
+       SET name = ?, target_amount = ?, target_date = ?, remind_enabled = ?, remind_time = ?
+       WHERE id = ?`,
+      input.name,
+      Math.max(0, input.target_amount),
+      input.target_date ?? null,
+      input.remind_enabled != null && Number(input.remind_enabled) === 0 ? 0 : 1,
+      input.remind_time ?? null,
+      id
+    );
+  });
+}
+
+/** Adjust bubble balance and mirror to linked account (if any). */
+export async function adjustSavingsBubbleBalance(id: number, delta: number): Promise<void> {
+  return runSerialized(async () => {
+    const db = await getDatabase();
+    await db.withTransactionAsync(async () => {
+      const row = await db.getFirstAsync<{ current_amount: number }>(
+        `SELECT current_amount FROM savings_bubbles WHERE id = ?`,
+        id
+      );
+      const next = Math.max(0, (row?.current_amount ?? 0) + delta);
+      await db.runAsync(`UPDATE savings_bubbles SET current_amount = ? WHERE id = ?`, next, id);
+      await db.runAsync(
+        `UPDATE accounts SET balance = ?, updated_at = ? WHERE linked_bubble_id = ?`,
+        next,
+        nowIso(),
+        id
+      );
+    });
+  });
+}
+
+export async function transferBetweenBubbles(input: {
+  fromBubbleId: number;
+  toBubbleId: number;
+  amount: number;
+}): Promise<void> {
+  return runSerialized(async () => {
+    const db = await getDatabase();
+    const amt = input.amount;
+    if (!Number.isFinite(amt) || amt <= 0) return;
+    if (input.fromBubbleId === input.toBubbleId) return;
+    await db.withTransactionAsync(async () => {
+      const from = await db.getFirstAsync<{ current_amount: number }>(
+        `SELECT current_amount FROM savings_bubbles WHERE id = ?`,
+        input.fromBubbleId
+      );
+      const to = await db.getFirstAsync<{ current_amount: number }>(
+        `SELECT current_amount FROM savings_bubbles WHERE id = ?`,
+        input.toBubbleId
+      );
+      if (!from || !to) throw new Error('Bubble not found');
+      const fromBal = Math.max(0, from.current_amount ?? 0);
+      const toBal = Math.max(0, to.current_amount ?? 0);
+      if (amt > fromBal) throw new Error('Not enough funds in the source bubble');
+
+      const nextFrom = Math.max(0, fromBal - amt);
+      const nextTo = Math.max(0, toBal + amt);
+
+      await db.runAsync(`UPDATE savings_bubbles SET current_amount = ? WHERE id = ?`, nextFrom, input.fromBubbleId);
+      await db.runAsync(`UPDATE savings_bubbles SET current_amount = ? WHERE id = ?`, nextTo, input.toBubbleId);
+
+      // Mirror linked accounts for both bubbles.
+      await db.runAsync(
+        `UPDATE accounts SET balance = ?, updated_at = ? WHERE linked_bubble_id = ?`,
+        nextFrom,
+        nowIso(),
+        input.fromBubbleId
+      );
+      await db.runAsync(
+        `UPDATE accounts SET balance = ?, updated_at = ? WHERE linked_bubble_id = ?`,
+        nextTo,
+        nowIso(),
+        input.toBubbleId
+      );
+    });
+  });
+}
+
+export async function getAccounts(): Promise<AccountRow[]> {
+  return runSerialized(() =>
+    getDatabase().then((db) =>
+      db.getAllAsync<AccountRow>(
+        `SELECT id, name, balance, linked_bubble_id, linked_bucket, updated_at FROM accounts ORDER BY updated_at DESC`
+      )
+    )
+  );
+}
+
+export async function getSafeToSpendMoves(): Promise<SafeToSpendMoveRow[]> {
+  return runSerialized(() =>
+    getDatabase().then((db) =>
+      db.getAllAsync<SafeToSpendMoveRow>(
+        `SELECT id, amount, date, bubble_id, kind, created_at FROM safe_to_spend_moves ORDER BY created_at DESC`
+      )
+    )
+  );
+}
+
+export async function addSafeToSpendMove(input: {
+  amount: number;
+  date: string;
+  bubble_id?: number | null;
+  kind: 'deposit' | 'withdraw';
+}): Promise<void> {
+  return runSerialized(async () => {
+    const db = await getDatabase();
+    await db.runAsync(
+      `INSERT INTO safe_to_spend_moves (amount, date, bubble_id, kind, created_at) VALUES (?, ?, ?, ?, ?)`,
+      input.amount,
+      input.date,
+      input.bubble_id ?? null,
+      input.kind,
+      nowIso()
+    );
+  });
+}
+
+export async function createAccount(input: { name: string; balance: number }): Promise<void> {
+  return runSerialized(async () => {
+    const db = await getDatabase();
+    await db.runAsync(
+      `INSERT INTO accounts (name, balance, linked_bubble_id, linked_bucket, updated_at) VALUES (?, ?, NULL, NULL, ?)`,
+      input.name,
+      Math.max(0, input.balance),
+      nowIso()
+    );
+  });
+}
+
+/** Update account balance; if linked, mirrors bubble balance. */
+export async function updateAccountBalance(id: number, balance: number): Promise<void> {
+  return runSerialized(async () => {
+    const db = await getDatabase();
+    await db.withTransactionAsync(async () => {
+      const next = Math.max(0, balance);
+      const row = await db.getFirstAsync<{ linked_bubble_id: number | null; linked_bucket: string | null }>(
+        `SELECT linked_bubble_id, linked_bucket FROM accounts WHERE id = ?`,
+        id
+      );
+      if (row?.linked_bucket) {
+        throw new Error('This account is linked to a system savings bucket. Unlink it to edit balance.');
+      }
+      await db.runAsync(
+        `UPDATE accounts SET balance = ?, updated_at = ? WHERE id = ?`,
+        next,
+        nowIso(),
+        id
+      );
+      const bubbleId = row?.linked_bubble_id ?? null;
+      if (bubbleId) {
+        await db.runAsync(
+          `UPDATE savings_bubbles SET current_amount = ? WHERE id = ?`,
+          next,
+          bubbleId
+        );
+      }
+    });
+  });
+}
+
+/** Link account to a bubble and immediately mirror balance from the bubble (bubble is source of truth). */
+export async function linkAccountToBubble(accountId: number, bubbleId: number): Promise<void> {
+  return runSerialized(async () => {
+    const db = await getDatabase();
+    await db.withTransactionAsync(async () => {
+      const bubble = await db.getFirstAsync<{ current_amount: number }>(
+        `SELECT current_amount FROM savings_bubbles WHERE id = ?`,
+        bubbleId
+      );
+      const amt = Math.max(0, bubble?.current_amount ?? 0);
+      await db.runAsync(
+        `UPDATE accounts SET linked_bubble_id = ?, linked_bucket = NULL, balance = ?, updated_at = ? WHERE id = ?`,
+        bubbleId,
+        amt,
+        nowIso(),
+        accountId
+      );
+    });
+  });
+}
+
+export async function unlinkAccount(accountId: number): Promise<void> {
+  return runSerialized(async () => {
+    const db = await getDatabase();
+    await db.runAsync(
+      `UPDATE accounts SET linked_bubble_id = NULL, linked_bucket = NULL, updated_at = ? WHERE id = ?`,
+      nowIso(),
+      accountId
+    );
+  });
+}
+
+export type SystemSavingsBucket = 'future' | 'emergency' | 'travel';
+
+export async function linkAccountToSystemBucket(accountId: number, bucket: SystemSavingsBucket): Promise<void> {
+  return runSerialized(async () => {
+    const db = await getDatabase();
+    await db.withTransactionAsync(async () => {
+      const bal = await db.getFirstAsync<{ emergency: number; travel: number; standard: number }>(
+        `SELECT emergency, travel, standard FROM savings_balances WHERE id = 1`
+      );
+      const amount =
+        bucket === 'future'
+          ? Math.max(0, bal?.standard ?? 0)
+          : bucket === 'emergency'
+            ? Math.max(0, bal?.emergency ?? 0)
+            : Math.max(0, bal?.travel ?? 0);
+      await db.runAsync(
+        `UPDATE accounts SET linked_bubble_id = NULL, linked_bucket = ?, balance = ?, updated_at = ? WHERE id = ?`,
+        bucket,
+        amount,
+        nowIso(),
+        accountId
+      );
+    });
+  });
+}
+
+/**
+ * Transfer between an UNLINKED account and a bubble.
+ * - When amount > 0: account -> bubble
+ * - When amount < 0: bubble -> account
+ * If the bubble has linked accounts, their balances will be mirrored to the bubble after the update.
+ */
+export async function transferBetweenAccountAndBubble(input: {
+  accountId: number;
+  bubbleId: number;
+  amount: number;
+}): Promise<void> {
+  return runSerialized(async () => {
+    const db = await getDatabase();
+    const amt = input.amount;
+    if (!Number.isFinite(amt) || amt === 0) return;
+    await db.withTransactionAsync(async () => {
+      const acc = await db.getFirstAsync<{ balance: number; linked_bubble_id: number | null; linked_bucket: string | null }>(
+        `SELECT balance, linked_bubble_id, linked_bucket FROM accounts WHERE id = ?`,
+        input.accountId
+      );
+      if (!acc) throw new Error('Account not found');
+      if (acc.linked_bubble_id) throw new Error('Transfers are only allowed for unlinked accounts');
+      if (acc.linked_bucket) throw new Error('Transfers are only allowed for unlinked accounts');
+
+      const bub = await db.getFirstAsync<{ current_amount: number }>(
+        `SELECT current_amount FROM savings_bubbles WHERE id = ?`,
+        input.bubbleId
+      );
+      if (!bub) throw new Error('Bubble not found');
+
+      const accBal = Math.max(0, acc.balance ?? 0);
+      const bubBal = Math.max(0, bub.current_amount ?? 0);
+
+      if (amt > 0 && amt > accBal) throw new Error('Not enough funds in the account');
+      if (amt < 0 && -amt > bubBal) throw new Error('Not enough funds in the bubble');
+
+      const nextAcc = Math.max(0, accBal - amt);
+      const nextBub = Math.max(0, bubBal + amt);
+
+      await db.runAsync(
+        `UPDATE accounts SET balance = ?, updated_at = ? WHERE id = ?`,
+        nextAcc,
+        nowIso(),
+        input.accountId
+      );
+      await db.runAsync(
+        `UPDATE savings_bubbles SET current_amount = ? WHERE id = ?`,
+        nextBub,
+        input.bubbleId
+      );
+
+      // Mirror any linked accounts to this bubble.
+      await db.runAsync(
+        `UPDATE accounts SET balance = ?, updated_at = ? WHERE linked_bubble_id = ?`,
+        nextBub,
+        nowIso(),
+        input.bubbleId
+      );
+    });
+  });
+}
+
 export interface AddLoanInput {
   name: string;
   total_amount: number;
@@ -819,6 +1244,31 @@ export async function replaceAllData(payload: {
     is_recurring: number;
     repayment_acknowledged_ym: string | null;
   }[];
+  savings_bubbles?: {
+    id: number;
+    name: string;
+    target_amount: number;
+    current_amount: number;
+    target_date: string | null;
+    remind_enabled: number;
+    remind_time: string | null;
+    created_at: string;
+  }[];
+  accounts?: {
+    id: number;
+    name: string;
+    balance: number;
+    linked_bubble_id: number | null;
+    linked_bucket: string | null;
+    updated_at: string;
+  }[];
+  safe_to_spend_moves?: {
+    amount: number;
+    date: string;
+    bubble_id: number | null;
+    kind: 'deposit' | 'withdraw';
+    created_at: string;
+  }[];
   savings_balances: SavingsBalances;
 }): Promise<void> {
   return runSerialized(async () => {
@@ -826,6 +1276,9 @@ export async function replaceAllData(payload: {
     await db.withTransactionAsync(async () => {
       await db.runAsync(`DELETE FROM transactions`);
       await db.runAsync(`DELETE FROM loans`);
+      await db.runAsync(`DELETE FROM savings_bubbles`);
+      await db.runAsync(`DELETE FROM accounts`);
+      await db.runAsync(`DELETE FROM safe_to_spend_moves`);
       await db.runAsync(`DELETE FROM settings`);
 
       for (const [k, v] of Object.entries(payload.settings)) {
@@ -864,7 +1317,93 @@ export async function replaceAllData(payload: {
         );
       }
 
+      // Restore bubbles first so accounts can link (id mapping).
+      const bubbleIdMap = new Map<number, number>();
+      for (const b of payload.savings_bubbles ?? []) {
+        const res = await db.runAsync(
+          `INSERT INTO savings_bubbles (name, target_amount, current_amount, target_date, remind_enabled, remind_time, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          b.name,
+          Math.max(0, b.target_amount),
+          Math.max(0, b.current_amount),
+          b.target_date ?? null,
+          b.remind_enabled != null && Number(b.remind_enabled) === 0 ? 0 : 1,
+          b.remind_time ?? null,
+          b.created_at
+        );
+        // expo-sqlite returns lastInsertRowId on result
+        const newId = Number((res as unknown as { lastInsertRowId?: number }).lastInsertRowId ?? 0);
+        const oldId = Number(b.id);
+        if (newId > 0 && Number.isFinite(oldId)) bubbleIdMap.set(oldId, newId);
+      }
+
+      for (const a of payload.accounts ?? []) {
+        const linked =
+          a.linked_bubble_id != null ? bubbleIdMap.get(a.linked_bubble_id) ?? null : null;
+        await db.runAsync(
+          `INSERT INTO accounts (name, balance, linked_bubble_id, linked_bucket, updated_at) VALUES (?, ?, ?, ?, ?)`,
+          a.name,
+          Math.max(0, a.balance),
+          linked,
+          a.linked_bucket ?? null,
+          a.updated_at
+        );
+      }
+
+      for (const m of payload.safe_to_spend_moves ?? []) {
+        const bubbleId = m.bubble_id != null ? bubbleIdMap.get(m.bubble_id) ?? null : null;
+        await db.runAsync(
+          `INSERT INTO safe_to_spend_moves (amount, date, bubble_id, kind, created_at) VALUES (?, ?, ?, ?, ?)`,
+          Number(m.amount),
+          String(m.date),
+          bubbleId,
+          m.kind === 'withdraw' ? 'withdraw' : 'deposit',
+          String(m.created_at ?? nowIso())
+        );
+      }
+
       await recomputeSavingsBalancesWithDb(db);
+    });
+  });
+}
+
+export async function resetAllData(): Promise<void> {
+  return runSerialized(async () => {
+    const db = await getDatabase();
+    await db.withTransactionAsync(async () => {
+      await db.runAsync(`DELETE FROM transactions`);
+      await db.runAsync(`DELETE FROM loans`);
+      await db.runAsync(`DELETE FROM savings_bubbles`);
+      await db.runAsync(`DELETE FROM accounts`);
+      await db.runAsync(`DELETE FROM safe_to_spend_moves`);
+      await db.runAsync(`DELETE FROM settings`);
+
+      await db.runAsync(
+        `INSERT OR IGNORE INTO savings_balances (id, emergency, travel, standard, disposable) VALUES (1, 0, 0, 0, 0)`
+      );
+      await db.runAsync(`UPDATE savings_balances SET emergency = 0, travel = 0, standard = 0, disposable = 0 WHERE id = 1`);
+
+      const defaults: [string, string][] = [
+        ['emergency_pct', '10'],
+        ['travel_pct', '10'],
+        ['standard_pct', '10'],
+        ['theme_preference', 'system'],
+        [SETTING_ONBOARDING_DONE, '0'],
+        [SETTING_NOTIFICATIONS_ENABLED, '1'],
+        ['budget_period_end_day', '0'],
+        ['loan_tick_ym', monthKey(new Date())],
+        [SETTING_CARRYOVER_SAFE_TO_SPEND, '0'],
+        [SETTING_LOAN_NOTIFY_ENABLED, '1'],
+        [SETTING_LOAN_NOTIFY_DAYS_BEFORE, '3'],
+        [SETTING_LOAN_NOTIFY_TIME, '09:00'],
+        [BUDGET_RATE_SETTING_KEYS.disposable, '40'],
+        [BUDGET_RATE_SETTING_KEYS.future, '40'],
+        [BUDGET_RATE_SETTING_KEYS.emergency, '40'],
+        [BUDGET_RATE_SETTING_KEYS.travel, '20'],
+      ];
+      for (const [k, v] of defaults) {
+        await db.runAsync(`INSERT INTO settings (key, value) VALUES (?, ?)`, k, v);
+      }
     });
   });
 }

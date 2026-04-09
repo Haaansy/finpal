@@ -1,26 +1,33 @@
-import 'react-native-gesture-handler';
-import Feather from '@expo/vector-icons/Feather';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { useFonts } from 'expo-font';
-import { Stack } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import 'react-native-reanimated';
+import Feather from "@expo/vector-icons/Feather";
+import FontAwesome from "@expo/vector-icons/FontAwesome";
+import {
+    DarkTheme,
+    DefaultTheme,
+    ThemeProvider,
+} from "@react-navigation/native";
+import { useFonts } from "expo-font";
+import { Stack } from "expo-router";
+import * as SplashScreen from "expo-splash-screen";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, View } from "react-native";
+import "react-native-gesture-handler";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import "react-native-reanimated";
 
-import { BudgetProvider } from '@/context/BudgetContext';
-import { FinpalDialogProvider } from '@/context/FinpalDialogContext';
-import { FinpalThemeProvider, useFinpalTheme } from '@/context/FinpalThemeContext';
-import { getAppSettings, getDatabase } from '@/db/db';
-import { initNotificationHandler } from '@/notifications/loanDueNotifications';
-import type { ThemePreference } from '@/db/types';
+import { BudgetProvider } from "@/context/BudgetContext";
+import { FinpalDialogProvider } from "@/context/FinpalDialogContext";
+import {
+    FinpalThemeProvider,
+    useFinpalTheme,
+} from "@/context/FinpalThemeContext";
+import { getAppSettings, getDatabase } from "@/db/db";
+import type { ThemePreference } from "@/db/types";
+import { initNotificationHandler } from "@/notifications/loanDueNotifications";
 
-export { ErrorBoundary } from 'expo-router';
+export { ErrorBoundary } from "expo-router";
 
 export const unstable_settings = {
-  initialRouteName: '(tabs)',
+  initialRouteName: "(tabs)",
 };
 
 SplashScreen.preventAutoHideAsync();
@@ -28,7 +35,7 @@ initNotificationHandler();
 
 function NavigationThemeBridge({ children }: { children: React.ReactNode }) {
   const { colors, navigationScheme } = useFinpalTheme();
-  const base = navigationScheme === 'dark' ? DarkTheme : DefaultTheme;
+  const base = navigationScheme === "dark" ? DarkTheme : DefaultTheme;
   const merged = {
     ...base,
     colors: {
@@ -56,7 +63,7 @@ function RootStack() {
 
 export default function RootLayout() {
   const [loaded, error] = useFonts({
-    SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
+    SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
     ...FontAwesome.font,
     ...Feather.font,
   });
@@ -72,7 +79,7 @@ export default function RootLayout() {
     getDatabase()
       .then(() => getAppSettings())
       .then((s) => setThemePref(s.themePreference))
-      .catch(() => setThemePref('system'));
+      .catch(() => setThemePref("system"));
   }, [loaded]);
 
   useEffect(() => {
@@ -83,7 +90,7 @@ export default function RootLayout() {
 
   if (!loaded || themePref === null) {
     return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+      <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
         <ActivityIndicator size="large" />
       </View>
     );

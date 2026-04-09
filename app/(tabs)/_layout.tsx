@@ -79,6 +79,18 @@ function TabsWithFab() {
             }}
           />
           <Tabs.Screen
+            name="savings"
+            options={{
+              href: null,
+            }}
+          />
+          <Tabs.Screen
+            name="accounts"
+            options={{
+              href: null,
+            }}
+          />
+          <Tabs.Screen
             name="transactions"
             options={{
               title: 'Transactions',
