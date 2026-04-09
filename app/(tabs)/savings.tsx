@@ -476,7 +476,12 @@ export default function SavingsScreen() {
               {actionBubble ? actionBubble.name : ""}
             </Text>
             {actionBubble?.target_date ? (
-              <Text style={[styles.sheetSub, { color: colors.textMuted, marginTop: 4 }]}>
+              <Text
+                style={[
+                  styles.sheetSub,
+                  { color: colors.textMuted, marginTop: 4 },
+                ]}
+              >
                 Target date: {actionBubble.target_date}
               </Text>
             ) : null}
