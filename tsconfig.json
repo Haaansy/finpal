@@ -3,9 +3,15 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
-      "@/*": [
-        "./*"
-      ]
+      "@/*": ["./*"],
+      "@/db/*": ["./src/db/*"],
+      "@/components/*": ["./src/components/*"],
+      "@/context/*": ["./src/context/*"],
+      "@/hooks/*": ["./src/hooks/*"],
+      "@/utils/*": ["./src/utils/*"],
+      "@/notifications/*": ["./src/notifications/*"],
+      "@/store/*": ["./src/store/*"],
+      "@/theme/*": ["./src/theme/*"]
     }
   },
   "include": [
