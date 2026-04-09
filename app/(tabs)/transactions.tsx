@@ -150,13 +150,12 @@ export default function TransactionsScreen() {
   );
 
   const sections = useMemo(() => {
-    if (!monthGrouped) return rawSections;
     return rawSections.map((s) => {
       const key = s.title;
       const open = openMonths[key] ?? true;
       return open ? s : { ...s, data: [] };
     });
-  }, [rawSections, monthGrouped, openMonths]);
+  }, [rawSections, openMonths]);
 
   const renderItem = ({
     item,
@@ -244,8 +243,10 @@ export default function TransactionsScreen() {
     );
   };
 
-  const renderSectionHeader = ({ section }: { section: TxSection }) =>
-    monthGrouped ? (
+  const renderSectionHeader = ({ section }: { section: TxSection }) => {
+    const open = openMonths[section.title] ?? true;
+    const isMonthHeader = monthGrouped;
+    return (
       <Pressable
         onPress={() =>
           setOpenMonths((m) => ({
@@ -255,6 +256,7 @@ export default function TransactionsScreen() {
         }
         style={({ pressed }) => [
           styles.monthHeaderRow,
+          !isMonthHeader && { marginTop: 6 },
           pressed && { opacity: 0.85 },
         ]}
         accessibilityRole="button"
@@ -263,23 +265,20 @@ export default function TransactionsScreen() {
         <Text
           style={[
             styles.sectionHeader,
-            styles.sectionHeaderMonth,
+            isMonthHeader ? styles.sectionHeaderMonth : undefined,
             { color: colors.textMuted },
           ]}
         >
           {section.title}
         </Text>
         <ChevronIcon
-          direction={(openMonths[section.title] ?? true) ? "up" : "down"}
+          direction={open ? "up" : "down"}
           size={16}
           color={colors.textMuted}
         />
       </Pressable>
-    ) : (
-      <Text style={[styles.sectionHeader, { color: colors.textMuted }]}>
-        {section.title}
-      </Text>
     );
+  };
 
   const listHeader = (
     <View>

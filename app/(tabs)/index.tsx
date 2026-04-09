@@ -19,12 +19,14 @@ import { useBudget } from "@/context/BudgetContext";
 import { useFinpalTheme } from "@/context/FinpalThemeContext";
 import { useCalculations } from "@/hooks/useCalculations";
 import { useDueDatesOverview } from "@/hooks/useDueDatesOverview";
+import { getBudgetPeriodRange, isDateInRange } from "@/utils/calculations";
 import { formatPhp } from "@/utils/currency";
+import { projectedLoanRepaymentIsos } from "@/utils/loanSchedule";
 
 export default function DashboardScreen() {
   const insets = useSafeAreaInsets();
   const { colors } = useFinpalTheme();
-  const { ready, loans } = useBudget();
+  const { ready, loans, settings } = useBudget();
   const dueDatesOverview = useDueDatesOverview();
   const {
     safeToSpend,
@@ -39,7 +41,12 @@ export default function DashboardScreen() {
     lowPriMonth,
   } = useCalculations();
 
-  const activeLoans = loans.filter((l) => l.months_left > 0);
+  const currentRange = getBudgetPeriodRange(settings.budgetPeriodEndDay, new Date());
+  const activeLoans = loans.filter((l) => {
+    if (l.months_left <= 0) return false;
+    const dueIsos = projectedLoanRepaymentIsos(l);
+    return dueIsos.some((iso) => isDateInRange(iso, currentRange));
+  });
 
   if (!ready) {
     return (
@@ -127,7 +134,7 @@ export default function DashboardScreen() {
               { backgroundColor: colors.surface, borderColor: colors.border },
             ])}
             accessibilityRole="button"
-            accessibilityLabel="View past period overview"
+            accessibilityLabel="Open period overview"
           >
             <View
               style={[
@@ -138,7 +145,7 @@ export default function DashboardScreen() {
               <FontAwesome name="history" size={18} color={colors.primary} />
             </View>
             <Text style={[styles.quickChipText, { color: colors.text }]}>
-              Past overview
+              Period overview
             </Text>
           </Pressable>
         </Link>
