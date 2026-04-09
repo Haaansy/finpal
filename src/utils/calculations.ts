@@ -367,9 +367,20 @@ export function totalMonthlyLoanRepaymentsAll(loans: LoanRow[]): number {
 export function sumLoanRepaymentsDueForRange(loans: LoanRow[], range: MonthRange): number {
   let total = 0;
   for (const loan of loans) {
-    if (loan.months_left <= 0) continue;
     const amount = Math.max(0, loan.monthly_repayment || 0);
     if (amount <= 0) continue;
+
+    // One-off loans: treat `repayment_date` as the single due date even if months_left was set to 0 after ticking.
+    // This keeps period outflow stable (paid vs unpaid shouldn't change totals for the period where it was due).
+    if ((loan.is_recurring ?? 1) === 0) {
+      const due = (loan.repayment_date ?? '').trim();
+      if (due && /^\d{4}-\d{2}-\d{2}$/.test(due) && isDateInRange(due, range)) {
+        total += amount;
+      }
+      continue;
+    }
+
+    if (loan.months_left <= 0) continue;
     const dueIsos = projectedLoanRepaymentIsos(loan);
     if (dueIsos.length === 0) continue;
     const countInRange = dueIsos.reduce((c, iso) => (isDateInRange(iso, range) ? c + 1 : c), 0);
