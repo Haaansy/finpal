@@ -457,6 +457,7 @@ export default function TransactionsScreen() {
             renderSectionHeader={renderSectionHeader}
             ListHeaderComponent={listHeader}
             stickySectionHeadersEnabled={monthGrouped}
+            showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 24 }}
             ListEmptyComponent={
               filteredRows.length === 0 ? (
